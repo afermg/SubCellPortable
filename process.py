@@ -64,18 +64,26 @@ if len(sys.argv) > 1:
         type=str,
     )
     argparser.add_argument(
-        "-u",
-        "--update_model",
-        help="if you want to update the selected model files [True, False]",
-        default=False,
-        type=bool,
+        '-u', '--update_model',
+        action='store_true',
+        help='download/update the selected model files'
     )
     argparser.add_argument(
-        "-csv",
-        "--create_csv",
-        help="if you want to merge the resulting probabilities and features in csv format [True, False]",
-        default=False,
-        type=bool,
+        '--no-update_model',
+        action='store_false',
+        dest='update_model',
+        help='do not download/update the selected model files'
+    )
+    argparser.add_argument(
+        '-csv', '--create_csv',
+        action='store_true',
+        help='generate a combined CSV of probabilities and embeddings'
+    )
+    argparser.add_argument(
+        '--no-create_csv',
+        action='store_false',
+        dest='create_csv',
+        help='do not generate a combined CSV'
     )
     argparser.add_argument(
         "-g",
