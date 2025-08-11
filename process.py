@@ -7,7 +7,6 @@ import pandas as pd
 import requests
 import torch
 import yaml
-from skimage.io import imread
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
@@ -15,6 +14,7 @@ from botocore.exceptions import ClientError
 from urllib.parse import urlparse
 
 import inference
+import image_utils
 from vit_model import ViTPoolClassifier
 
 
@@ -220,13 +220,13 @@ try:
                 # We load the images as numpy arrays
                 cell_data = []
                 if "r" in config["model_channels"]:
-                    cell_data.append([imread(curr_set_arr[0].strip(), as_gray=True)])
+                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[0].strip()))
                 if "y" in config["model_channels"]:
-                    cell_data.append([imread(curr_set_arr[1].strip(), as_gray=True)])
+                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[1].strip()))
                 if "b" in config["model_channels"]:
-                    cell_data.append([imread(curr_set_arr[2].strip(), as_gray=True)])
+                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[2].strip()))
                 if "g" in config["model_channels"]:
-                    cell_data.append([imread(curr_set_arr[3].strip(), as_gray=True)])
+                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[3].strip()))
 
                 # We run the model in inference
                 embedding, probabilities = inference.run_model(
