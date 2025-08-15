@@ -220,13 +220,13 @@ try:
                 # We load the images as numpy arrays
                 cell_data = []
                 if "r" in config["model_channels"]:
-                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[0].strip()))
+                    cell_data.append([image_utils.read_grayscale_image(curr_set_arr[0].strip())])
                 if "y" in config["model_channels"]:
-                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[1].strip()))
+                    cell_data.append([image_utils.read_grayscale_image(curr_set_arr[1].strip())])
                 if "b" in config["model_channels"]:
-                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[2].strip()))
+                    cell_data.append([image_utils.read_grayscale_image(curr_set_arr[2].strip())])
                 if "g" in config["model_channels"]:
-                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[3].strip()))
+                    cell_data.append([image_utils.read_grayscale_image(curr_set_arr[3].strip())])
 
                 # We run the model in inference
                 embedding, probabilities = inference.run_model(
