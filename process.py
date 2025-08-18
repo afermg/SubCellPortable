@@ -94,13 +94,15 @@ if len(sys.argv) > 1:
     )
 
     args = argparser.parse_args()
-    config = config | args.__dict__
+    for key in args.__dict__:
+        if args.__dict__[key]: config[key] = args.__dict__[key]
 
 # If you want to use a configuration file with your script, add it here
 with open("config.yaml", "r") as file:
     config_contents = yaml.safe_load(file)
     if config_contents:
-        config = config | config_contents
+        for key, value in config_contents.items():
+            config[key] = value
 
 # Log the start time and the final configuration so you can keep track of what you did
 config["log"].info("Start: " + datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"))
