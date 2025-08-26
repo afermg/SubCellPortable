@@ -1,5 +1,8 @@
-#model_channels: "rybg"
-#model_type: "mae_contrast_supcon_model"
-#update_model: False
-#create_csv: False
-#gpu: -1
+model_channels: "rybg"
+model_type: "mae_contrast_supcon_model"
+update_model: False
+create_csv: True
+gpu: 0
+batch_size: 600
+num_workers: 20
+prefetch_factor: 3

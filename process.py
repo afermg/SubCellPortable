@@ -12,10 +12,13 @@ from botocore import UNSIGNED
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from urllib.parse import urlparse
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 import inference
 import image_utils
 from vit_model import ViTPoolClassifier
+from dataset import SubCellDataset, collate_fn
 
 
 os.environ["DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -91,6 +94,33 @@ if len(sys.argv) > 1:
         help="the GPU id to use [0, 1, 2, 3]. -1 for CPU usage",
         default=-1,
         type=int,
+    )
+    argparser.add_argument(
+        "-b",
+        "--batch_size",
+        help="batch size for processing (default: 512)",
+        default=256,
+        type=int,
+    )
+    argparser.add_argument(
+        "-w",
+        "--num_workers",
+        help="number of workers for data loading (default: 4)",
+        default=4,
+        type=int,
+    )
+    argparser.add_argument(
+        "-p",
+        "--prefetch_factor",
+        help="prefetch factor for data loading (default: 2)",
+        default=2,
+        type=int,
+    )
+    argparser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="suppress verbose logging (quiet mode)",
     )
 
     args = argparser.parse_args()
@@ -208,33 +238,55 @@ try:
         final_columns.extend(feat_columns)
         df = pd.DataFrame(columns=final_columns)
 
-    # We iterate over each set of images to process
+    # We use DataLoader for efficient batch processing
     if os.path.exists("./path_list.csv"):
-        path_list = open("./path_list.csv", "r")
-        for curr_set in path_list:
+        # Create dataset and dataloader
+        dataset = SubCellDataset("./path_list.csv", config["model_channels"])
+        dataloader = DataLoader(
+            dataset,
+            batch_size=config.get("batch_size", 256),
+            num_workers=config.get("num_workers", 4),
+            prefetch_factor=config.get("prefetch_factor", 2),
+            collate_fn=collate_fn,
+            shuffle=False,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=config.get("num_workers", 4) > 0,
+        )
 
-            if curr_set.strip() != "" and not curr_set.startswith("#"):
-                curr_set_arr = curr_set.split(",")
-                # We create the output folder
-                os.makedirs(curr_set_arr[4].strip(), exist_ok=True)
-                # We load the images as numpy arrays
-                cell_data = []
-                if "r" in config["model_channels"]:
-                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[0].strip()))
-                if "y" in config["model_channels"]:
-                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[1].strip()))
-                if "b" in config["model_channels"]:
-                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[2].strip()))
-                if "g" in config["model_channels"]:
-                    cell_data.append(image_utils.read_grayscale_image(curr_set_arr[3].strip()))
+        config["log"].info(
+            f"Processing {len(dataset)} images in batches of {config.get('batch_size', 8)}"
+        )
+        config["log"].info(
+            f"Using {config.get('num_workers', 4)} workers for data loading"
+        )
 
-                # We run the model in inference
-                embedding, probabilities = inference.run_model(
-                    model,
-                    cell_data,
-                    device,
-                    os.path.join(curr_set_arr[4], curr_set_arr[5].strip()),
-                )
+        # Wrap DataLoader with tqdm for progress bar
+        for batch_idx, batch in enumerate(
+            tqdm(dataloader, desc="Processing batches", unit="batch")
+        ):
+            images = batch["images"]
+            output_folders = batch["output_folders"]
+            output_prefixes = batch["output_prefixes"]
+            original_items = batch["original_items"]
+
+            # Create output directories
+            for output_folder in output_folders:
+                os.makedirs(output_folder, exist_ok=True)
+
+            # Prepare output paths
+            output_paths = [
+                os.path.join(output_folders[i], output_prefixes[i])
+                for i in range(len(output_folders))
+            ]
+
+            # Run batch inference
+            batch_results = inference.run_model(
+                model, images, device, output_paths
+            )
+
+            # Process results for each image in batch
+            for i, (embedding, probabilities) in enumerate(batch_results):
+                output_prefix = output_prefixes[i]
 
                 if classifier_paths:
                     curr_probs_l = probabilities.tolist()
@@ -255,7 +307,7 @@ try:
                 # Save results in csv format
                 if config["create_csv"]:
                     new_row = []
-                    new_row.append(curr_set_arr[5].strip())
+                    new_row.append(output_prefix)
                     if classifier_paths:
                         new_row.append(max_location_name)
                         new_row.append(max_location_class)
@@ -265,13 +317,26 @@ try:
                     new_row.extend(embedding)
                     df.loc[len(df.index)] = new_row
 
-                log_message = "- Saved results for " + curr_set_arr[5].strip()
-                if classifier_paths:
-                    log_message = log_message + ", locations predicted [" + max_3_location_names + "]"
-                config["log"].info(log_message)
+                # Log detailed results unless quiet mode is enabled
+                if not config.get("quiet", False):
+                    log_message = f"- Saved results for {output_prefix}"
+                    if classifier_paths:
+                        log_message = (
+                            log_message
+                            + ", locations predicted ["
+                            + max_3_location_names
+                            + "]"
+                        )
+                    config["log"].info(log_message)
 
         if config["create_csv"]:
             df.to_csv("result.csv", index=False)
+
+        print(f"Processed {len(dataset)} images successfully")
+        
+        # Clean up DataLoader workers to prevent hanging
+        del dataloader
+
 except Exception as e:
     config["log"].error("- " + str(e))
 

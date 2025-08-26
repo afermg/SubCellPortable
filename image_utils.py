@@ -28,7 +28,7 @@ def read_grayscale_image(input_image, force_channel = -1, force_bit_depth = 0, m
     elif np_img.ndim > 2:
         np_img = np.max(np_img, axis=2)
     if force_bit_depth != 0:
-        np_img = convert_bitdepth(input_image, force_bit_depth)
+        np_img = convert_bitdepth(np_img, force_bit_depth)
     elif minmax_norm:
         np_img = (np_img - np.amin(np_img)) / (np.amax(np_img) - np.amin(np_img))
 

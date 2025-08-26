@@ -73,12 +73,12 @@ CLASS2COLOR = {
 }
 
 
-def min_max_standardize(im):
-    min_val = torch.amin(im, dim=(1, 2, 3), keepdims=True)
-    max_val = torch.amax(im, dim=(1, 2, 3), keepdims=True)
+def min_max_standardize(batch_data):
+    min_val = torch.amin(batch_data, dim=(1, 2, 3), keepdims=True)
+    max_val = torch.amax(batch_data, dim=(1, 2, 3), keepdims=True)
 
-    im = (im - min_val) / (max_val - min_val + 1e-6)
-    return im
+    batch_data = (batch_data - min_val) / (max_val - min_val + 1e-8)
+    return batch_data
 
 
 def save_attention_map(attn, input_shape, output_path):
@@ -95,19 +95,44 @@ def save_attention_map(attn, input_shape, output_path):
 
 
 @torch.no_grad()
-def run_model(model, cell_crop, device, output_path):
-    cell_crop = np.stack(cell_crop, axis=1)
-    cell_crop = torch.from_numpy(cell_crop).float().to(device)
-    cell_crop = min_max_standardize(cell_crop)
+def run_model(model, batch_data, device, output_paths):
+    """
+    Run model inference on a batch of images
 
-    output = model(cell_crop)
+    Args:
+        model: The ViT model
+        batch_data: Tensor of shape (batch_size, channels, height, width)
+        device: Device to run inference on
+        output_paths: List of output paths for each image in batch
 
-    probabilities = output.probabilities[0].cpu().numpy()
-    embedding = output.pool_op[0].cpu().numpy()
-
-    np.save(output_path + "_embedding.npy", embedding)
-    np.save(output_path + "_probabilities.npy", probabilities)
-    save_attention_map(
-        output.pool_attn, (cell_crop.shape[2], cell_crop.shape[3]), output_path
-    )
-    return np.array(embedding), np.array(probabilities)
+    Returns:
+        List of (embedding, probabilities) tuples for each image
+    """
+    batch_data = batch_data.to(device)
+    batch_data = min_max_standardize(batch_data)
+    
+    # Run model on entire batch
+    output = model(batch_data)
+    
+    # Convert to numpy once for all items in batch
+    probabilities_batch = output.probabilities.cpu().numpy()
+    embeddings_batch = output.pool_op.cpu().numpy()
+    
+    # Save results for each image
+    results = []
+    for i, output_path in enumerate(output_paths):
+        probabilities = probabilities_batch[i]
+        embedding = embeddings_batch[i]
+        
+        # Save individual results
+        np.save(output_path + "_embedding.npy", embedding)
+        np.save(output_path + "_probabilities.npy", probabilities)
+        
+        # Save attention map for this image
+        if output.pool_attn is not None:
+            attn = output.pool_attn[i:i+1]  # Keep batch dimension for F.interpolate
+            save_attention_map(attn, (batch_data.shape[2], batch_data.shape[3]), output_path)
+        
+        results.append((embedding, probabilities))
+    
+    return results
