@@ -8,13 +8,15 @@ import image_utils
 class SubCellDataset(Dataset):
     """PyTorch Dataset for SubCell image processing"""
 
-    def __init__(self, path_list_file, model_channels="rybg"):
+    def __init__(self, path_list_file, model_channels="rybg", minmax_norm=False):
         """
         Args:
             path_list_file (str): Path to the CSV file containing image paths
             model_channels (str): Channel configuration (rybg, rbg, ybg, bg)
+            minmax_norm (bool): Apply min-max normalization to images
         """
         self.model_channels = model_channels
+        self.minmax_norm = minmax_norm
         self.data_list = []
         
         # Define channel mapping
@@ -46,7 +48,7 @@ class SubCellDataset(Dataset):
         for channel_name in self.model_channels:
             channel_key = self.channel_mapping[channel_name]
             # load the channel image
-            img = image_utils.read_grayscale_image(item[channel_key])
+            img = image_utils.read_grayscale_image(item[channel_key], minmax_norm=self.minmax_norm)
             cell_data.append(img)
         
         # Stack images along channel dimension

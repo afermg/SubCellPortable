@@ -1,8 +1,13 @@
 model_channels: "rybg"
 model_type: "mae_contrast_supcon_model"
 update_model: False
-create_csv: True
+create_csv: False
 gpu: 0
 batch_size: 600
-num_workers: 20
+num_workers: 15
 prefetch_factor: 3
+save_attention_maps: False
+embeddings_only: True
+output_format: "h5ad"  # "individual" or "h5ad"
+async_saving: True
+minmax_norm: True  # Apply min-max normalization to images

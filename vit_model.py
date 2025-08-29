@@ -370,11 +370,16 @@ class ViTPoolClassifier(nn.Module):
             pool_op = torch.mean(outputs.last_hidden_state, dim=1)
             pool_attn = None
 
-        probs = torch.stack(
-            [self.sigmoid(classifier(pool_op)) for classifier in self.classifiers],
-            dim=1,
-        )
-        probs = torch.mean(probs, dim=1)
+        # Handle case when no classifiers are loaded (embeddings_only mode)
+        if len(self.classifiers) > 0:
+            probs = torch.stack(
+                [self.sigmoid(classifier(pool_op)) for classifier in self.classifiers],
+                dim=1,
+            )
+            probs = torch.mean(probs, dim=1)
+        else:
+            # Return dummy probabilities with correct shape for embeddings_only mode
+            probs = torch.zeros(pool_op.shape[0], self.num_classes, device=pool_op.device)
 
         h_feat = h // self.vit_config.patch_size
         w_feat = w // self.vit_config.patch_size
@@ -383,9 +388,11 @@ class ViTPoolClassifier(nn.Module):
             b, self.vit_config.num_attention_heads, h_feat, w_feat
         )
 
-        pool_attn = pool_attn[:, :, 1:].reshape(
-            b, self.pool_model.num_heads, h_feat, w_feat
-        )
+        # Handle pool_attn reshaping (only if pool_model exists)
+        if pool_attn is not None:
+            pool_attn = pool_attn[:, :, 1:].reshape(
+                b, self.pool_model.num_heads, h_feat, w_feat
+            )
 
         return ViTPoolModelOutput(
             last_hidden_state=outputs.last_hidden_state,

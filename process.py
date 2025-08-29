@@ -152,14 +152,16 @@ try:
     ) as config_buffer:
         model_config_file = yaml.safe_load(config_buffer)
 
+    # Skip classifier loading if embeddings_only mode
     classifier_paths = None
-    if "classifier_paths" in model_config_file:
+    if not config.get("embeddings_only", False) and "classifier_paths" in model_config_file:
         classifier_paths = model_config_file["classifier_paths"]
     encoder_path = model_config_file["encoder_path"]
 
     needs_update = config["update_model"]
-    for curr_classifier in classifier_paths:
-        needs_update = needs_update or not os.path.isfile(curr_classifier)
+    if classifier_paths:
+        for curr_classifier in classifier_paths:
+            needs_update = needs_update or not os.path.isfile(curr_classifier)
     needs_update = needs_update or not os.path.isfile(encoder_path)
 
     # Checking for model update
@@ -168,23 +170,25 @@ try:
         with open("models_urls.yaml", "r") as urls_file:
             url_info = yaml.safe_load(urls_file)
 
-            for index, curr_url_info in enumerate(url_info[config["model_channels"]][config["model_type"]]["classifiers"]):
-                if curr_url_info.startswith("s3://"):
-                    try:
-                        s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
-                        urlcomponents = urlparse(curr_url_info)
-                        s3.download_file(urlcomponents.netloc, urlcomponents.path[1:], classifier_paths[index])
-                        config["log"].info("  - " + classifier_paths[index] + " updated.")
-                    except ClientError as e:
-                        config["log"].warning("  - " + classifier_paths[index] + " s3 url " + curr_url_info + " not working.")
-                else:
-                    response = requests.get(curr_url_info)
-                    if response.status_code == 200:
-                        with open(classifier_paths[index], "wb") as downloaded_file:
-                            downloaded_file.write(response.content)
-                        config["log"].info("  - " + classifier_paths[index] + " updated.")
+            # Only download classifiers if not in embeddings_only mode
+            if classifier_paths:
+                for index, curr_url_info in enumerate(url_info[config["model_channels"]][config["model_type"]]["classifiers"]):
+                    if curr_url_info.startswith("s3://"):
+                        try:
+                            s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+                            urlcomponents = urlparse(curr_url_info)
+                            s3.download_file(urlcomponents.netloc, urlcomponents.path[1:], classifier_paths[index])
+                            config["log"].info("  - " + classifier_paths[index] + " updated.")
+                        except ClientError as e:
+                            config["log"].warning("  - " + classifier_paths[index] + " s3 url " + curr_url_info + " not working.")
                     else:
-                        config["log"].warning("  - " + classifier_paths[index] + " url " + curr_url_info + " not found.")
+                        response = requests.get(curr_url_info)
+                        if response.status_code == 200:
+                            with open(classifier_paths[index], "wb") as downloaded_file:
+                                downloaded_file.write(response.content)
+                            config["log"].info("  - " + classifier_paths[index] + " updated.")
+                        else:
+                            config["log"].warning("  - " + classifier_paths[index] + " url " + curr_url_info + " not found.")
 
             curr_url_info = url_info[config["model_channels"]][config["model_type"]]["encoder"]
             if curr_url_info.startswith("s3://"):
@@ -206,8 +210,17 @@ try:
 
     model_config = model_config_file.get("model_config")
     model = ViTPoolClassifier(model_config)
-    model.load_model_dict(encoder_path, classifier_paths)
+    
+    # Pass empty list for classifier_paths if None (embeddings_only mode)
+    classifier_paths_for_loading = classifier_paths if classifier_paths is not None else []
+    model.load_model_dict(encoder_path, classifier_paths_for_loading)
     model.eval()
+    
+    # Log what mode we're running in
+    if config.get("embeddings_only", False):
+        config["log"].info("🔍 Running in EMBEDDINGS ONLY mode - no classification")
+    else:
+        config["log"].info("🎯 Running in FULL mode - embeddings + classification")
 
     if torch.cuda.is_available() and config["gpu"] != -1:
         device = torch.device("cuda:" + str(config["gpu"]))
@@ -241,7 +254,7 @@ try:
     # We use DataLoader for efficient batch processing
     if os.path.exists("./path_list.csv"):
         # Create dataset and dataloader
-        dataset = SubCellDataset("./path_list.csv", config["model_channels"])
+        dataset = SubCellDataset("./path_list.csv", config["model_channels"], minmax_norm=config.get("minmax_norm", False))
         dataloader = DataLoader(
             dataset,
             batch_size=config.get("batch_size", 256),
@@ -260,6 +273,15 @@ try:
             f"Using {config.get('num_workers', 4)} workers for data loading"
         )
 
+        # Initialize list to track async save operations
+        pending_saves = []
+        
+        # Initialize H5AD data collection (if using H5AD format)
+        all_embeddings = []
+        all_probabilities = []
+        all_image_names = []
+        all_output_folders = []
+        
         # Wrap DataLoader with tqdm for progress bar
         for batch_idx, batch in enumerate(
             tqdm(dataloader, desc="Processing batches", unit="batch")
@@ -280,15 +302,49 @@ try:
             ]
 
             # Run batch inference
-            batch_results = inference.run_model(
-                model, images, device, output_paths
+            inference_result = inference.run_model(
+                model, images, device, output_paths, 
+                save_attention_maps=config.get("save_attention_maps", True),
+                embeddings_only=config.get("embeddings_only", False),
+                output_format=config.get("output_format", "individual"),
+                async_saving=config.get("async_saving", False)
             )
+            
+            # Handle different output formats and modes
+            if config.get("output_format", "individual") == "h5ad":
+                # H5AD: collect data without saving
+                batch_results = inference_result
+                
+                # Collect embeddings and metadata for final H5AD save
+                for i, (embedding, probabilities) in enumerate(batch_results):
+                    all_embeddings.append(embedding)
+                    if probabilities is not None:
+                        all_probabilities.append(probabilities)
+                    all_image_names.append(output_prefixes[i])
+                    all_output_folders.append(output_folders[i])
+                    
+            elif config.get("async_saving", False):
+                # Async individual files
+                batch_results, save_future = inference_result
+                pending_saves.append(save_future)
+            else:
+                # Sync individual files
+                batch_results = inference_result
+            
+            # Free GPU memory after each batch (critical for async mode)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-            # Process results for each image in batch
+            # Process results for each image in batch (if needed)
+            batch_rows = []
+            
             for i, (embedding, probabilities) in enumerate(batch_results):
                 output_prefix = output_prefixes[i]
 
-                if classifier_paths:
+                # Classification computation (only if not embeddings_only mode)
+                max_location_name = None
+                max_3_location_names = None
+                if classifier_paths and not config.get("embeddings_only", False):
                     curr_probs_l = probabilities.tolist()
                     max_location_class = curr_probs_l.index(max(curr_probs_l))
                     max_location_name = inference.CLASS2NAME[max_location_class]
@@ -304,7 +360,7 @@ try:
                         + inference.CLASS2NAME[max_3_location_classes[2]]
                     )
 
-                # Save results in csv format
+                # Prepare row for batch CSV operations
                 if config["create_csv"]:
                     new_row = []
                     new_row.append(output_prefix)
@@ -315,12 +371,12 @@ try:
                         new_row.append(",".join(map(str, max_3_location_classes)))
                         new_row.extend(probabilities)
                     new_row.extend(embedding)
-                    df.loc[len(df.index)] = new_row
+                    batch_rows.append(new_row)
 
-                # Log detailed results unless quiet mode is enabled
+                # Logging operations
                 if not config.get("quiet", False):
                     log_message = f"- Saved results for {output_prefix}"
-                    if classifier_paths:
+                    if classifier_paths and max_3_location_names:
                         log_message = (
                             log_message
                             + ", locations predicted ["
@@ -328,6 +384,56 @@ try:
                             + "]"
                         )
                     config["log"].info(log_message)
+
+            # Batch CSV operations
+            if config["create_csv"] and batch_rows:
+                batch_df = pd.DataFrame(batch_rows, columns=df.columns)
+                df = pd.concat([df, batch_df], ignore_index=True)
+
+        # Handle final saving based on output format
+        if config.get("output_format", "individual") == "h5ad":
+            # Save single H5AD file with all data in the proper output directory
+            config["log"].info(f"Saving H5AD file with {len(all_embeddings)} embeddings...")
+            
+            import numpy as np
+            import h5py
+            
+            # Use the output folder from CSV directly - it's the same for all images
+            output_folder = all_output_folders[0] if all_output_folders else "."
+            h5ad_path = os.path.join(output_folder, "embeddings.h5ad")
+            
+            # Create proper H5AD file
+            embeddings_array = np.stack(all_embeddings)
+            
+            with h5py.File(h5ad_path, 'w') as f:
+                # Save embeddings as the main data matrix (following AnnData convention)
+                f.create_dataset('X', data=embeddings_array)
+                
+                # Save observation names (image names)
+                obs_names = np.array(all_image_names, dtype='S')
+                f.create_dataset('obs/index', data=obs_names)
+                
+                # Save probabilities if available
+                if all_probabilities:
+                    probabilities_array = np.stack(all_probabilities)
+                    f.create_dataset('obsm/probabilities', data=probabilities_array)
+                
+                # Add metadata
+                f.attrs['n_obs'] = len(all_embeddings)
+                f.attrs['n_vars'] = embeddings_array.shape[1]
+                f.attrs['created_by'] = 'SubCellPortable'
+                f.attrs['embeddings_only'] = config.get("embeddings_only", False)
+            
+            config["log"].info(f"H5AD file saved: {h5ad_path}")
+            config["log"].info(f"Shape: {embeddings_array.shape}")
+            config["log"].info(f"Contains: embeddings, image_names" + (", probabilities" if all_probabilities else ""))
+                
+        elif config.get("async_saving", False) and pending_saves:
+            # Wait for all async saves to complete
+            config["log"].info(f"Waiting for {len(pending_saves)} async save operations to complete...")
+            for save_future in pending_saves:
+                save_future.result()  # Wait for completion
+            config["log"].info("All async saves completed")
 
         if config["create_csv"]:
             df.to_csv("result.csv", index=False)

@@ -1,5 +1,8 @@
-import cv2
 import numpy as np
+import tifffile
+from PIL import Image
+from pathlib import Path
+import os
 
 
 def convert_bitdepth(image, bitdepth):
@@ -22,7 +25,19 @@ def convert_bitdepth(image, bitdepth):
 
 
 def read_grayscale_image(input_image, force_channel = -1, force_bit_depth = 0, minmax_norm = False):
-    np_img = cv2.imread(input_image, -1)
+     
+    # Check file extension to choose optimal loading method
+    file_ext = Path(input_image).suffix.lower()
+    
+    if file_ext in ['.tiff', '.tif']:
+        # Use tifffile for TIFF images
+        np_img = tifffile.imread(input_image)
+    else:
+        # Use PIL for everything else (PNG, JPG, etc.)
+        pil_img = Image.open(input_image)
+        np_img = np.array(pil_img)
+    
+    # Rest of the processing remains the same
     if force_channel != -1:
         np_img = np_img[:, :, force_channel]
     elif np_img.ndim > 2:

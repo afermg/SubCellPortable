@@ -3,6 +3,10 @@ import torch
 import torch.nn.functional as F
 from skimage.io import imsave
 from torchvision.utils import make_grid
+import concurrent.futures
+import threading
+import h5py
+import os
 
 CLASS2NAME = {
     0: "Actin filaments",
@@ -95,7 +99,8 @@ def save_attention_map(attn, input_shape, output_path):
 
 
 @torch.no_grad()
-def run_model(model, batch_data, device, output_paths):
+def run_model(model, batch_data, device, output_paths, save_attention_maps=True, embeddings_only=False, 
+              output_format="individual", async_saving=False):
     """
     Run model inference on a batch of images
 
@@ -104,9 +109,15 @@ def run_model(model, batch_data, device, output_paths):
         batch_data: Tensor of shape (batch_size, channels, height, width)
         device: Device to run inference on
         output_paths: List of output paths for each image in batch
+        save_attention_maps: Whether to save attention map images (default: True)
+        embeddings_only: If True, skip probability computation and saves (default: False)
+        output_format: "individual" for separate files, "h5ad" for combined (default: "individual")
+        async_saving: If True, save files asynchronously (default: False)
 
     Returns:
-        List of (embedding, probabilities) tuples for each image
+        If async_saving=False: List of (embedding, probabilities) tuples for each image
+        If async_saving=True: (results_list, save_future) where save_future can be awaited
+        Note: probabilities will be None if embeddings_only=True
     """
     batch_data = batch_data.to(device)
     batch_data = min_max_standardize(batch_data)
@@ -115,24 +126,99 @@ def run_model(model, batch_data, device, output_paths):
     output = model(batch_data)
     
     # Convert to numpy once for all items in batch
-    probabilities_batch = output.probabilities.cpu().numpy()
     embeddings_batch = output.pool_op.cpu().numpy()
     
-    # Save results for each image
+    # Only compute probabilities if not in embeddings_only mode
+    probabilities_batch = None
+    if not embeddings_only:
+        probabilities_batch = output.probabilities.cpu().numpy()
+    
+    # Free GPU memory immediately - critical for async mode
+    del output
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Prepare results
     results = []
     for i, output_path in enumerate(output_paths):
-        probabilities = probabilities_batch[i]
         embedding = embeddings_batch[i]
-        
-        # Save individual results
-        np.save(output_path + "_embedding.npy", embedding)
-        np.save(output_path + "_probabilities.npy", probabilities)
-        
-        # Save attention map for this image
-        if output.pool_attn is not None:
-            attn = output.pool_attn[i:i+1]  # Keep batch dimension for F.interpolate
-            save_attention_map(attn, (batch_data.shape[2], batch_data.shape[3]), output_path)
-        
+        probabilities = probabilities_batch[i] if probabilities_batch is not None else None
         results.append((embedding, probabilities))
     
-    return results
+    # Handle file saving based on mode
+    if output_format == "h5ad":
+        # For H5AD, return results without saving - will be collected and saved at end
+        return results
+        
+    elif async_saving:
+        # Return immediately, save asynchronously
+        save_future = _async_save_batch(
+            results, output_paths, embeddings_only, save_attention_maps, 
+            None, batch_data, output_format  # Pass None for output since we freed it
+        )
+        return results, save_future
+    else:
+        # Synchronous saving (original behavior)
+        _sync_save_batch(
+            results, output_paths, embeddings_only, save_attention_maps,
+            None, batch_data, output_format  # Pass None for output since we freed it
+        )
+        return results
+
+
+def _sync_save_batch(results, output_paths, embeddings_only, save_attention_maps, output, batch_data, output_format):
+    """Synchronous batch saving (original behavior)"""
+    
+    # Individual files
+    for i, output_path in enumerate(output_paths):
+        embedding, probabilities = results[i]
+        
+        # Save embedding
+        np.save(output_path + "_embedding.npy", embedding)
+        
+        # Save probability (only if not embeddings_only)
+        if not embeddings_only and probabilities is not None:
+            np.save(output_path + "_probabilities.npy", probabilities)
+        
+        # Save attention map for this image (configurable)
+        # Note: attention maps disabled in async mode to prevent GPU memory issues
+        if save_attention_maps and output is not None and output.pool_attn is not None:
+            attn = output.pool_attn[i:i+1]  # Keep batch dimension for F.interpolate
+            save_attention_map(attn, (batch_data.shape[2], batch_data.shape[3]), output_path)
+
+
+def _async_save_batch(results, output_paths, embeddings_only, save_attention_maps, output, batch_data, output_format):
+    """Asynchronous batch saving using ThreadPoolExecutor"""
+    
+    # Individual files - can parallelize
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+    
+    def save_single_item(i):
+        output_path = output_paths[i]
+        embedding, probabilities = results[i]
+        
+        # Save embedding
+        np.save(output_path + "_embedding.npy", embedding)
+        
+        # Save probability (only if not embeddings_only)
+        if not embeddings_only and probabilities is not None:
+            np.save(output_path + "_probabilities.npy", probabilities)
+        
+        # Save attention map (configurable) 
+        # Note: attention maps disabled in async mode to prevent GPU memory issues
+        if save_attention_maps and output is not None and output.pool_attn is not None:
+            attn = output.pool_attn[i:i+1]  # Keep batch dimension for F.interpolate
+            save_attention_map(attn, (batch_data.shape[2], batch_data.shape[3]), output_path)
+    
+    # Submit all save tasks
+    futures = [executor.submit(save_single_item, i) for i in range(len(output_paths))]
+    
+    # Return a future that completes when all saves are done
+    def wait_all():
+        concurrent.futures.wait(futures)
+        executor.shutdown(wait=True)
+    
+    return concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(wait_all)
+
+
+
