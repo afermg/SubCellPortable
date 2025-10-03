@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![DOI](https://img.shields.io/badge/DOI-10.1101%2F2024.12.06.627299-blue)](https://www.biorxiv.org/content/10.1101/2024.12.06.627299v1)
 
-SubCellPortable provides a streamlined, production-ready interface for running the [SubCell model](https://github.com/CellProfiling/subcell-embed) on microscopy images. Generate embeddings that encode cell morphology or protein localization and predict protein subcellular localization from multi-channel fluorescence microscopy with high-performance batch processing.
+SubCellPortable provides a streamlined interface for running the [SubCell model](https://github.com/CellProfiling/subcell-embed) on IF microscopy images. Generate single-cell embeddings that encode cell morphology or protein localization and predict protein subcellular localization from multi-channel fluorescence microscopy images.
 
 **📄 Preprint**: [SubCell: Subcellular protein localization foundation model](https://www.biorxiv.org/content/10.1101/2024.12.06.627299v1) (Gupta et al., 2024)
 
@@ -271,15 +271,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 📞 Support
+## Support
 
 - **Issues**: [GitHub Issues](https://github.com/CellProfiling/SubCellPortable/issues)
-- **Changelog**: See `CHANGELOG.md` for version history
 
 ---
 
-## 🙏 Acknowledgments
-
-Created by the Lundberg Lab. SubCell model developed by Ankit Gupta.
-
-SubCellPortable wrapper maintained with ❤️ for the computational biology community.
+SubCellPortable wrapper maintained with ❤️ by the Lundberg Lab for the computational biology community.
