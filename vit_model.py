@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple, Union
+import logging
 
 import torch
 from transformers.modeling_outputs import BaseModelOutput
@@ -13,9 +14,10 @@ from transformers.models.vit.modeling_vit import (
     ViTPatchEmbeddings,
     ViTPooler,
     ViTPreTrainedModel,
-    ViTSdpaAttention,
 )
 from torch import nn, Tensor
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -71,9 +73,8 @@ class ViTLayer(nn.Module):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
-        self.attention = (
-            ViTAttention(config) if not sdpa_attn else ViTSdpaAttention(config)
-        )
+        # Note: sdpa_attn parameter kept for compatibility but uses ViTAttention
+        self.attention = ViTAttention(config)
         self.intermediate = ViTIntermediate(config)
         self.output = ViTOutput(config)
         self.layernorm_before = nn.LayerNorm(
@@ -329,7 +330,7 @@ class ViTPoolClassifier(nn.Module):
         }
 
         status = self.encoder.load_state_dict(encoder_ckpt)
-        print(f"Encoder status: {status}")
+        logger.info(f"Encoder status: {status}")
 
         pool_ckpt = {
             k.replace("pool_model.", ""): v
@@ -339,9 +340,9 @@ class ViTPoolClassifier(nn.Module):
         pool_ckpt = {k.replace("1.", "0."): v for k, v in pool_ckpt.items()}
         if pool_ckpt and self.pool_model:
             status = self.pool_model.load_state_dict(pool_ckpt)
-            print(f"Pool model status: {status}")
+            logger.info(f"Pool model status: {status}")
         else:
-            print("No pool model found in checkpoint")
+            logger.info("No pool model found in checkpoint")
 
         if isinstance(classifier_paths, str):
             classifier_paths = [classifier_paths]
@@ -358,7 +359,7 @@ class ViTPoolClassifier(nn.Module):
                 k.replace("6.", "4."): v for k, v in classifier_ckpt.items()
             }
             status = self.classifiers[i].load_state_dict(classifier_ckpt)
-            print(f"Classifier {i+1} status: {status}")
+            logger.info(f"Classifier {i+1} status: {status}")
 
     def forward(self, x: torch.Tensor) -> ViTPoolModelOutput:
         b, c, h, w = x.shape

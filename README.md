@@ -1,104 +1,285 @@
-SubCellPortable
-===============
-This is a convenient code wrapper to run Lundberg lab SubCell model (created by Ankit Gupta) in inference mode with your own images.
+# SubCellPortable
 
+> **Efficient inference wrapper for the SubCell subcellular protein localization foundation model**
 
-Installation
-------------
+[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![DOI](https://img.shields.io/badge/DOI-10.1101%2F2024.12.06.627299-blue)](https://www.biorxiv.org/content/10.1101/2024.12.06.627299v1)
 
-If you use any Python IDE (VSCode, PyCharm, Spyder, etc...), just:
-- Either import the project into your IDE through git/github OR Create a new project and download all the repository code from github into it.
-- Create a virtual environment for that project.
-- Install the project requirements through your IDE. Make sure the packages versions match, as IDEs try to be too smart some times.
+SubCellPortable provides a streamlined, production-ready interface for running the [SubCell model](https://github.com/CellProfiling/subcell-embed) on microscopy images. Generate embeddings that encode cell morphology or protein localization and predict protein subcellular localization from multi-channel fluorescence microscopy with high-performance batch processing.
 
-If you want to install it via basic Python virtual environment:
-- Install `python3`, `pip` and `virtualenv` in case you don't have them yet.
-- Navigate to your desired working directory.
-  - Example: `cd /home/lab/sandbox`
-- Create a virtual environment:
-  - Example: `python3 -m venv subcell`
-- Download/clone all the repository code inside your virtual environment directory.
-- Navigate to your virtual environment directory and activate it:
-  - Example: `source bin/activate` (linux) or `Scripts\activate.bat` (windows)
-- Install all requirements through pip:
-  - Example: `pip install -r requirements.txt`
-- Profit!
+**📄 Preprint**: [SubCell: Subcellular protein localization foundation model](https://www.biorxiv.org/content/10.1101/2024.12.06.627299v1) (Gupta et al., 2024)
 
+---
 
-Setup
------
+## 🚀 Quick Start
 
-You need to download the SubCell model files you want to use. If you want to use the default public models and classifiers (by default only one classifier is used), you don't need to do anything.
+### Installation
 
-Alternatively, you might want to customize which model and/or classifier(s) you want to use. The simplest way to do this is:
+```bash
+# Clone repository
+git clone https://github.com/yourusername/SubCellPortable.git
+cd SubCellPortable
 
-- Edit and modify `models_urls.yaml` file:
-- Locate the lines related to the model(s) you want to use and input the model URLs.
-  - So, for example, if you plan to run SubCell with 4 channels (nuclei, microtubules, ER and protein images) with "mae_contrast_supcon_model", you need to edit the 2 urls located under `rybg` group, `mae_contrast_supcon_model` subgroup.
-- Use the `update_model` parameter set to `True` the fist time you run the model.
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-Of course, you can also bring the model files on your own: just make sure to place them into the proper folder structure under the `models` directory.
-
-
-Running the code
----------------- 
-
-**NOTE**: remember that you have to access your created virtual environment before running the code! If you are using an IDE you are probably ready to go, but if you have installed a basic python virtual environment remember to activate it like this: 
-- Example:
-   - `cd /home/lab/sandbox/example`
-   - `source bin/activate`
-
-To run SubCellPortable you have first to gather the information about the sets of images you want to process. SubCellPortable reads `path_list.csv` to locate each set of images, in the following .csv format: 
-
-`r_image,y_image,b_image,g_image,output_folder,output_prefix`
-
-- `r_image`: the microtubules targeting marker cell image. 
-- `y_image`: the ER targeting marker cell image.
-- `b_image`: the nuclei targeting marker cell image.
-- `g_image`: the protein targeting marker cell image.
-- `output_folder`: the base folder that will contain all results.
-- `output_prefix`: the prefix appended to all files generated per cell.
-
-All images can be relative or absolute paths, or directly URLs. You can also skip cells between runs with the special character `#` in front of the desired lines. 
-Check the following `path_list.csv` content as an example of a possible run for the `rbg` model (microtubules, nuclei, protein):
-
-```
-#r_image,y_image,b_image,g_image,output_folder,output_prefix
-images/cell_1_mt.png,,images/cell_1_nuc.png,images/cell_1_prot.png,output,cell1_
-#images/cell_2_mt.png,,images/cell_2_nuc.png,images/cell_2_prot.png,output,cell2_
-images/cell_3_mt.png,,images/cell_3_nuc.png,images/cell_3_prot.png,output,cell3_
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-Once you have prepared your `path_list.csv` you are ready to run the `process.py` script. You can choose between 3 different running approaches, depending on your personal preferences:
+### Basic Usage
 
-- Edit directly the constants located in the `process.py` script:
-  - Probably the least versatile, but useful if you are always running SubCell with the same settings.
-  - Just change the values under for the following section of code: `# If you want to use constants with your script, add them here` .
-  - Simply call `python process.py`.
+1. **Prepare your input CSV** (`path_list.csv`):
 
-- Call `process.py` script with arguments:
-  - You can get a list of available parameters (and their default values) using `-help` or `-?` argument.
-  - Example call: `python process.py -c rbg -t mae_contrast_supcon_model -csv True`.
+```csv
+r_image,y_image,b_image,g_image,output_prefix
+images/cell_1_mt.png,,images/cell_1_nuc.png,images/cell_1_prot.png,cell1_
+images/cell_2_mt.png,,images/cell_2_nuc.png,images/cell_2_prot.png,cell2_
+```
 
-- Edit the `config.yaml` file:
-  - Just change the contents of the file with your desired values.
-  - Simply call `python process.py`.
+**Channel mapping:**
+- `r` = microtubules (red)
+- `y` = ER (yellow)
+- `b` = nuclei (blue/DAPI)
+- `g` = protein of interest (green)
 
+*Leave channels empty if not available (e.g., use `rbg` for 3-channel images)*
 
-Output
------- 
+2. **Configure settings** (`config.yaml`):
 
-SubCell model creates the following items per each cell crop input:
-- `[output_prefix]_embedding.npy`: the resulting vector embedding (1536 long) of the protein.
-- `[output_prefix]_probabilities.npy`: an array of weighted probabilities of each subcellular location class.
-- `[output_prefix]_attention_map`: a 64x64 PNG thumbnail of the attention map where the model has focused.
+```yaml
+model_channels: "rybg"      # Channel configuration
+output_dir: "./results"     # Output directory
+batch_size: 128             # Batch size (adjust for GPU memory)
+gpu: 0                      # GPU device ID (-1 for CPU)
+output_format: "combined"   # "combined" (h5ad) or "individual" (npy)
+```
 
-SubCellPortable provides some convenient information on top of that:
-- In the `log.txt` produced by the run you can see the top 3 location names predicted. 
-- If you use the `-csv` optional parameter a `result.csv` CSV file will be created with:
-  - `id`: your chosen (hopefully unique) `output_prefix`.
-  - `top_class_name,top_class,top_3_classes_names,top_3_classes`: convenient pre-calculated top predicted class and top 3 predicted classes.
-  - `prob00-prob30`: full probabilities array.
-  - `feat0000-feat1535`: full embedding vector.
-- You can find the classes names in the `CLASS2NAME` dictionary at the beginning of the `inference.py` script.
-- You can also find a helping `CLASS2COLOR` dictionary to assign a specific HEX color per class.
+3. **Run inference**:
+
+```bash
+python process.py
+```
+
+---
+
+## 📖 Usage Guide
+
+### Command-Line Interface
+
+```bash
+# Basic run with config file
+python process.py
+
+# Specify parameters via CLI
+python process.py --output_dir ./results --batch_size 256 --gpu 0
+
+# Embeddings only (faster, no classification)
+python process.py -o ./results --embeddings_only
+
+# Get help
+python process.py --help
+```
+
+### Input CSV Formats
+
+**Recommended Format:**
+```csv
+r_image,y_image,b_image,g_image,output_prefix
+path/to/image1_mt.png,,path/to/image1_nuc.png,path/to/image1_prot.png,sample_1
+path/to/image2_mt.png,,path/to/image2_nuc.png,path/to/image2_prot.png,batch_A/sample_2
+```
+
+- Skip rows by prefixing with `#`
+- Create subfolders in the output folder by them to output_prefix like: /subfolder_1/sample_1
+
+**Legacy Format** (deprecated but supported):
+```csv
+r_image,y_image,b_image,g_image,output_folder,output_prefix
+...
+```
+
+---
+
+## ⚙️ Configuration Parameters
+
+### Basic Parameters
+
+| Parameter | Description | Default | Example |
+|-----------|-------------|---------|---------|
+| `--output_dir` `-o` | Output directory for all results | - | `./results` |
+| `--model_channels` `-c` | Channel configuration | `rybg` | `rbg`, `ybg`, `bg` |
+| `--model_type` `-m` | Model architecture | `mae_contrast_supcon_model` | `vit_supcon_model` |
+| `--output_format` | Output format | `combined` | `individual` |
+| `--num_workers` `-w` | Data loading workers | `4` | `8` |
+| `--gpu` `-g` | GPU device ID (-1 = CPU) | `-1` | `0` |
+| `--batch_size` `-b` | Batch size | `128` | `256` |
+| `--embeddings_only` | Skip classification | `False` | - |
+
+### Advanced Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--update_model` `-u` | Download/update models | `False` |
+| `--prefetch_factor` `-p` | Prefetch batches | `2` |
+| `--create_csv` | Generate combined CSV | `False` |
+| `--save_attention_maps` | Save attention visualizations | `False` |
+| `--async_saving` | Async file saving (individual only) | `False` |
+| `--quiet` `-q` | Suppress verbose logging | `False` |
+
+---
+
+## 📦 Output Formats
+
+### Default: Combined H5AD Format
+
+**File**: `embeddings.h5ad` (AnnData-compatible)
+
+```python
+import anndata as ad
+
+# Load results
+adata = ad.read_h5ad("results/embeddings.h5ad")
+
+# Access data
+embeddings = adata.X                    # (n_samples, 1536)
+probabilities = adata.obsm['probabilities']  # (n_samples, 31)
+sample_ids = adata.obs_names            # Image identifiers
+```
+
+**Compatible with**: scanpy and other single-cell tools
+
+### Individual Format
+
+**Files per image**:
+- `{output_prefix}_embedding.npy` - 1536D embedding vector
+- `{output_prefix}_probabilities.npy` - 31-class probability distribution
+- `{output_prefix}_attention_map.png` - Attention visualization (optional)
+
+```python
+import numpy as np
+
+embedding = np.load("results/cell1_embedding.npy")      # Shape: (1536,)
+probs = np.load("results/cell1_probabilities.npy")      # Shape: (31,)
+```
+
+### Optional: Combined CSV
+
+**File**: `result.csv`
+
+| Column | Description |
+|--------|-------------|
+| `id` | Sample identifier |
+| `top_class_name` | Top predicted location |
+| `top_class` | Top class index |
+| `top_3_classes_names` | Top 3 predictions (comma-separated) |
+| `top_3_classes` | Top 3 indices |
+| `prob00` - `prob30` | Full probability distribution |
+| `feat0000` - `feat1535` | Full embedding vector |
+
+---
+
+## 🎯 Subcellular Location Classes
+
+The model predicts 31 subcellular locations:
+
+<details>
+<summary>View all 31 classes</summary>
+
+1. Actin filaments
+2. Aggresome
+3. Cell Junctions
+4. Centriolar satellite
+5. Centrosome
+6. Cytokinetic bridge
+7. Cytoplasmic bodies
+8. Cytosol
+9. Endoplasmic reticulum
+10. Endosomes
+11. Focal adhesion sites
+12. Golgi apparatus
+13. Intermediate filaments
+14. Lipid droplets
+15. Lysosomes
+16. Microtubules
+17. Midbody
+18. Mitochondria
+19. Mitotic chromosome
+20. Mitotic spindle
+21. Nuclear bodies
+22. Nuclear membrane
+23. Nuclear speckles
+24. Nucleoli
+25. Nucleoli fibrillar center
+26. Nucleoli rim
+27. Nucleoplasm
+28. Peroxisomes
+29. Plasma membrane
+30. Vesicles
+31. Negative
+
+</details>
+
+Class names and visualization colors available in `inference.py` (`CLASS2NAME`, `CLASS2COLOR` dictionaries).
+
+---
+
+## 🔧 Model Setup
+
+### Using Default Models
+
+Models are automatically downloaded on first run with `-u/--update_model`:
+
+```bash
+python process.py -u --output_dir ./results
+```
+
+### Custom Models
+
+Edit `models_urls.yaml` to specify custom model URLs:
+
+```yaml
+rybg:  # 4-channel configuration
+  mae_contrast_supcon_model:
+    encoder: "s3://bucket/path/to/encoder.pth"
+    classifier_s0: "https://url/to/classifier.pth"
+```
+
+---
+
+## 🤝 Citation
+
+If you use SubCellPortable in your research, please cite:
+
+```bibtex
+@article{gupta2024subcell,
+  title={SubCell: Subcellular protein localization foundation model},
+  author={Gupta, Ankit and others},
+  journal={bioRxiv},
+  year={2024},
+  doi={10.1101/2024.12.06.627299}
+}
+```
+
+---
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/CellProfiling/SubCellPortable/issues)
+- **Changelog**: See `CHANGELOG.md` for version history
+
+---
+
+## 🙏 Acknowledgments
+
+Created by the Lundberg Lab. SubCell model developed by Ankit Gupta.
+
+SubCellPortable wrapper maintained with ❤️ for the computational biology community.

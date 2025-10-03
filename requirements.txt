@@ -10,3 +10,6 @@ boto3==1.35.76
 imagecodecs==2024.12.30
 opencv-python==4.9.0.80
 tqdm==4.66.1
+h5py==3.11.0
+pillow
+tifffile>=2023.0.0

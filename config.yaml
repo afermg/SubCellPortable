@@ -1,13 +1,17 @@
 model_channels: "rybg"
 model_type: "mae_contrast_supcon_model"
 update_model: False
+
+# Output configuration
+output_dir: "./output"  # Directory for all output files (required for new CSV format)
 create_csv: False
+save_attention_maps: False
+output_format: "combined"  # "individual" (.npy files) or "combined" (.h5ad file)
+embeddings_only: True
+
+# Performance configuration
 gpu: 0
-batch_size: 600
+batch_size: 128
 num_workers: 15
 prefetch_factor: 3
-save_attention_maps: False
-embeddings_only: True
-output_format: "h5ad"  # "individual" or "h5ad"
-async_saving: True
-minmax_norm: True  # Apply min-max normalization to images
+async_saving: False
