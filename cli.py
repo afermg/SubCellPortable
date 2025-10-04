@@ -13,7 +13,24 @@ def create_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         description="SubCellPortable: Run SubCell model inference on microscopy images",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog="""
+Examples:
+  python process.py                            # Use config.yaml settings
+  python process.py -o ./results               # Specify output directory
+  python process.py -o ./results -g 0 -b 256   # Use GPU 0 with batch size 256
+  python process.py -o ./results --embeddings_only  # Generate only embeddings (faster)
+
+Common mistakes:
+  ✗ python process.py 2                  # Missing flag for GPU
+  ✓ python process.py -g 2               # Correct: use -g for GPU ID
+
+  ✗ python process.py output/            # Missing -o flag
+  ✓ python process.py -o output/         # Correct: use -o for output directory
+
+For more help: python process.py --help
+Configuration file: Edit config.yaml for easier parameter management
+"""
     )
 
     # Model configuration

@@ -295,7 +295,10 @@ class ViTPoolClassifier(nn.Module):
     def __init__(self, config: Dict):
         super(ViTPoolClassifier, self).__init__()
 
-        self.vit_config = ViTConfig(**config["vit_model"])
+        vit_model_config = config["vit_model"].copy()
+        # Use eager attention to avoid SDPA warnings when output_attentions=True
+        vit_model_config["attn_implementation"] = "eager"
+        self.vit_config = ViTConfig(**vit_model_config)
 
         self.encoder = ViTInferenceModel(self.vit_config, add_pooling_layer=False)
 
@@ -324,7 +327,7 @@ class ViTPoolClassifier(nn.Module):
         classifier_paths: Union[str, List[str]],
         device="cpu",
     ):
-        checkpoint = torch.load(encoder_path, map_location=device)
+        checkpoint = torch.load(encoder_path, map_location=device, weights_only=False)
         encoder_ckpt = {
             k[len("encoder.") :]: v for k, v in checkpoint.items() if "encoder." in k
         }
@@ -351,7 +354,7 @@ class ViTPoolClassifier(nn.Module):
             [self.make_classifier() for _ in range(len(classifier_paths))]
         )
         for i, classifier_path in enumerate(classifier_paths):
-            classifier_ckpt = torch.load(classifier_path, map_location=device)
+            classifier_ckpt = torch.load(classifier_path, map_location=device, weights_only=False)
             classifier_ckpt = {
                 k.replace("3.", "2."): v for k, v in classifier_ckpt.items()
             }

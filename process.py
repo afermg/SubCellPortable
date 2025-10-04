@@ -290,13 +290,31 @@ def run_inference() -> None:
                     output_paths.append(full_path)
 
             # Run inference
-            inference_result = inference.run_model(
-                model, images, device, output_paths,
-                save_attention_maps=config.save_attention_maps,
-                embeddings_only=config.embeddings_only,
-                output_format=config.output_format,
-                async_saving=config.async_saving
-            )
+            try:
+                inference_result = inference.run_model(
+                    model, images, device, output_paths,
+                    save_attention_maps=config.save_attention_maps,
+                    embeddings_only=config.embeddings_only,
+                    output_format=config.output_format,
+                    async_saving=config.async_saving
+                )
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    logger.error("=" * 60)
+                    logger.error("❌ CUDA OUT OF MEMORY ERROR")
+                    logger.error("=" * 60)
+                    logger.error(f"Current configuration:")
+                    logger.error(f"  batch_size: {config.batch_size}")
+                    logger.error(f"  num_workers: {config.num_workers}")
+                    logger.error(f"  GPU: {config.gpu}")
+                    logger.error("")
+                    logger.error("💡 Suggestions to fix:")
+                    logger.error(f"  1. Reduce batch_size: -b {max(1, config.batch_size // 2)}")
+                    logger.error(f"  2. Use fewer workers: -w {max(1, config.num_workers // 2)}")
+                    logger.error("  3. Switch to CPU: -g -1 (slower but uses RAM instead)")
+                    logger.error("  4. Close other GPU applications")
+                    logger.error("=" * 60)
+                raise
 
             # Handle different return formats
             if config.output_format == "combined":
@@ -376,7 +394,11 @@ def run_inference() -> None:
                 logger.info(f"  - embeddings.h5ad")
             logger.info(f"  - log.txt")
             if config.output_format == "individual":
-                logger.info(f"  - {total_images} individual files (*_embedding.npy, etc.)")
+                logger.info(f"  - {total_images} embedding files (*_embedding.npy)")
+                if not config.embeddings_only:
+                    logger.info(f"  - {total_images} probability files (*_probabilities.npy)")
+                if config.save_attention_maps:
+                    logger.info(f"  - {total_images} attention maps (*_attention_map.png)")
 
         # Clean up
         del dataloader
