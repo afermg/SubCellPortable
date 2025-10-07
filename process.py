@@ -44,33 +44,43 @@ def setup_logging(log_file: str = LOG_FILE) -> logging.Logger:
     return logger
 
 
-def load_config() -> SubCellConfig:
+def load_config() -> tuple[SubCellConfig, str, str]:
     """Load configuration from multiple sources.
 
     Configuration priority (highest to lowest):
     1. Command-line arguments
-    2. config.yaml file
+    2. config.yaml file (or custom config file)
     3. Default values
 
     Returns:
-        Merged configuration
+        Tuple of (config object, config_file_path, path_list_path)
     """
+    # Parse CLI args (only explicitly provided args)
+    cli_args = parse_args()
+
+    # Get config file path (default or custom)
+    config_file = cli_args.pop("config", "config.yaml")
+
+    # Get path_list file path (default or custom)
+    path_list = cli_args.pop("path_list", PATH_LIST_CSV)
+
     # Start with defaults
     config_dict = {}
 
-    # Load from config.yaml if exists
-    if os.path.exists("config.yaml"):
-        with open("config.yaml", "r") as f:
+    # Load from config file if exists
+    if os.path.exists(config_file):
+        with open(config_file, "r") as f:
             yaml_config = yaml.safe_load(f)
             if yaml_config:
                 config_dict.update(yaml_config)
 
     # Override with command-line arguments
-    cli_args = parse_args()
+    # Note: cli_args only contains explicitly provided arguments (not defaults)
+    # This ensures config file values aren't overwritten by CLI defaults
     config_dict.update(cli_args)
 
     # Create config object (with validation)
-    return SubCellConfig.from_dict(config_dict)
+    return SubCellConfig.from_dict(config_dict), config_file, path_list
 
 
 def setup_device(gpu_id: int, logger: logging.Logger) -> torch.device:
@@ -174,8 +184,8 @@ def run_inference() -> None:
     # Track overall timing
     start_time = datetime.datetime.now()
 
-    # Setup
-    config = load_config()
+    # Setup - load config and get file paths
+    config, config_file, path_list = load_config()
 
     # Setup logging with output_dir if specified
     if config.output_dir:
@@ -192,6 +202,8 @@ def run_inference() -> None:
     logger.info("SubCellPortable - Subcellular Localization Inference")
     logger.info("=" * 60)
     logger.info(f"Start: {start_time.strftime('%Y/%m/%d %H:%M:%S')}")
+    logger.info(f"Config file: {config_file}")
+    logger.info(f"Input CSV: {path_list}")
     logger.info("Parameters:")
     for key, value in config.to_dict().items():
         logger.info(f"  {key}: {value}")
@@ -223,7 +235,7 @@ def run_inference() -> None:
         model.to(device)
 
         # Create dataloader
-        dataloader = create_dataloader(PATH_LIST_CSV, config, logger)
+        dataloader = create_dataloader(path_list, config, logger)
 
         # Check CSV format and validate output_dir requirement
         uses_old_format = dataloader.dataset.uses_old_format

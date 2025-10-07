@@ -97,7 +97,7 @@ class SubCellConfig:
 # Constants
 NUM_CLASSES = 31
 EMBEDDING_DIM = 1536
-PATH_LIST_CSV = "./path_list.csv"
+PATH_LIST_CSV = "path_list.csv"
 MODELS_URLS_FILE = "models_urls.yaml"
 MODEL_CONFIG_FILE = "model_config.yaml"
 RESULT_CSV_FILE = "result.csv"

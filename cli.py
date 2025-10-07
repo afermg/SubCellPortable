@@ -20,6 +20,7 @@ Examples:
   python process.py -o ./results               # Specify output directory
   python process.py -o ./results -g 0 -b 256   # Use GPU 0 with batch size 256
   python process.py -o ./results --embeddings_only  # Generate only embeddings (faster)
+  python process.py --config custom.yaml --path-list experiment1.csv  # Custom config and input
 
 Common mistakes:
   ✗ python process.py 2                  # Missing flag for GPU
@@ -33,13 +34,28 @@ Configuration file: Edit config.yaml for easier parameter management
 """
     )
 
+    # Input/config files
+    parser.add_argument(
+        "--config",
+        help="Path to configuration YAML file (default: config.yaml)",
+        default=argparse.SUPPRESS,
+        type=str,
+    )
+    parser.add_argument(
+        "--path-list",
+        dest="path_list",
+        help="Path to input CSV file with image paths (default: path_list.csv)",
+        default=argparse.SUPPRESS,
+        type=str,
+    )
+
     # Model configuration
     parser.add_argument(
         "-c",
         "--model_channels",
         help="Channel images to be used",
         choices=["rybg", "rbg", "ybg", "bg"],
-        default="rybg",
+        default=argparse.SUPPRESS,
         type=str,
     )
     parser.add_argument(
@@ -47,7 +63,7 @@ Configuration file: Edit config.yaml for easier parameter management
         "--model_type",
         help="Model type to be used",
         choices=["mae_contrast_supcon_model", "vit_supcon_model"],
-        default="mae_contrast_supcon_model",
+        default=argparse.SUPPRESS,
         type=str,
     )
     parser.add_argument(
@@ -62,7 +78,7 @@ Configuration file: Edit config.yaml for easier parameter management
         "-o",
         "--output_dir",
         help="Output directory for all results (required for new CSV format without output_folder column)",
-        default=None,
+        default=argparse.SUPPRESS,
         type=str,
     )
     parser.add_argument(
@@ -79,7 +95,7 @@ Configuration file: Edit config.yaml for easier parameter management
     parser.add_argument(
         "--output_format",
         choices=["individual", "combined"],
-        default="combined",
+        default=argparse.SUPPRESS,
         help="Output format: individual (.npy files) or combined (.h5ad file)",
     )
     parser.add_argument(
@@ -93,28 +109,28 @@ Configuration file: Edit config.yaml for easier parameter management
         "-g",
         "--gpu",
         help="The GPU id to use [0, 1, 2, 3...]. -1 for CPU usage",
-        default=-1,
+        default=argparse.SUPPRESS,
         type=int,
     )
     parser.add_argument(
         "-b",
         "--batch_size",
         help="Batch size for processing",
-        default=128,
+        default=argparse.SUPPRESS,
         type=int,
     )
     parser.add_argument(
         "-w",
         "--num_workers",
         help="Number of workers for data loading",
-        default=4,
+        default=argparse.SUPPRESS,
         type=int,
     )
     parser.add_argument(
         "-p",
         "--prefetch_factor",
         help="Prefetch factor for data loading",
-        default=2,
+        default=argparse.SUPPRESS,
         type=int,
     )
     parser.add_argument(
@@ -137,11 +153,14 @@ Configuration file: Edit config.yaml for easier parameter management
 def parse_args(args: Optional[list] = None) -> dict:
     """Parse command-line arguments.
 
+    Only returns arguments that were explicitly provided by the user.
+    This ensures CLI defaults don't override config file values.
+
     Args:
         args: List of arguments to parse. If None, uses sys.argv
 
     Returns:
-        Dictionary of parsed arguments
+        Dictionary of only explicitly provided arguments
     """
     parser = create_parser()
 
@@ -154,4 +173,16 @@ def parse_args(args: Optional[list] = None) -> dict:
         return {}
 
     parsed = parser.parse_args(args)
-    return vars(parsed)
+    result = vars(parsed)
+
+    # Filter out store_true arguments that are False (not provided)
+    # These have default False when not specified, but we don't want them
+    # to override config file values
+    filtered_result = {}
+    for key, value in result.items():
+        # Keep all non-boolean values (SUPPRESS handles those)
+        # Only keep boolean values if True (meaning flag was provided)
+        if not isinstance(value, bool) or value is True:
+            filtered_result[key] = value
+
+    return filtered_result
