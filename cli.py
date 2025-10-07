@@ -20,7 +20,7 @@ Examples:
   python process.py -o ./results               # Specify output directory
   python process.py -o ./results -g 0 -b 256   # Use GPU 0 with batch size 256
   python process.py -o ./results --embeddings_only  # Generate only embeddings (faster)
-  python process.py --config custom.yaml --path-list experiment1.csv  # Custom config and input
+  python process.py --config custom.yaml --path_list experiment1.csv  # Custom config and input
 
 Common mistakes:
   ✗ python process.py 2                  # Missing flag for GPU
@@ -42,8 +42,7 @@ Configuration file: Edit config.yaml for easier parameter management
         type=str,
     )
     parser.add_argument(
-        "--path-list",
-        dest="path_list",
+        "--path_list",
         help="Path to input CSV file with image paths (default: path_list.csv)",
         default=argparse.SUPPRESS,
         type=str,

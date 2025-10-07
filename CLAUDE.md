@@ -45,7 +45,7 @@ python process.py -o ./results --embeddings_only -csv
 python process.py -o ./results -g -1
 
 # Custom config and input files
-python process.py --config custom_config.yaml --path-list experiment1.csv -o ./results
+python process.py --config custom_config.yaml --path_list experiment1.csv -o ./results
 
 # Update model files from remote
 python process.py -u
@@ -53,7 +53,7 @@ python process.py -u
 
 **Configuration options:**
 - `--config`: Path to configuration YAML file (default: `config.yaml`)
-- `--path-list`: Path to input CSV file with image paths (default: `path_list.csv`)
+- `--path_list`: Path to input CSV file with image paths (default: `path_list.csv`)
 - `-o, --output_dir`: Output directory for all results (required for new CSV format)
 - `-c, --model_channels`: Channel configuration (`rybg`, `rbg`, `ybg`, `bg`)
 - `-t, --model_type`: Model type (`mae_contrast_supcon_model`, `vit_supcon_model`)
@@ -230,7 +230,7 @@ Configuration sources are applied in this order (later overrides earlier):
 
 **Note:** You can specify custom configuration and input files:
 - `--config <path>`: Use a custom config file instead of `config.yaml`
-- `--path-list <path>`: Use a custom input CSV instead of `path_list.csv`
+- `--path_list <path>`: Use a custom input CSV instead of `path_list.csv`
 
 ## Subcellular Location Classes
 

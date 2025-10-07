@@ -77,7 +77,7 @@ python process.py
 python process.py --output_dir ./results --batch_size 256 --gpu 0
 
 # Custom config and input files
-python process.py --config experiment_config.yaml --path-list experiment_data.csv -o ./results
+python process.py --config experiment_config.yaml --path_list experiment_data.csv -o ./results
 
 # Embeddings only (faster, no classification)
 python process.py -o ./results --embeddings_only
@@ -113,7 +113,7 @@ r_image,y_image,b_image,g_image,output_folder,output_prefix
 | Parameter | Description | Default | Example |
 |-----------|-------------|---------|---------|
 | `--config` | Path to configuration YAML file | `config.yaml` | `experiment.yaml` |
-| `--path-list` | Path to input CSV file | `path_list.csv` | `data.csv` |
+| `--path_list` | Path to input CSV file | `path_list.csv` | `data.csv` |
 | `--output_dir` `-o` | Output directory for all results | - | `./results` |
 | `--model_channels` `-c` | Channel configuration | `rybg` | `rbg`, `ybg`, `bg` |
 | `--model_type` `-m` | Model architecture | `mae_contrast_supcon_model` | `vit_supcon_model` |
