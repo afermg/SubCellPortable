@@ -234,17 +234,17 @@ Configuration sources are applied in this order (later overrides earlier):
 
 ## Subcellular Location Classes
 
-The model predicts 31 classes (see `inference.py:11-43`):
-- 0: Actin filaments
-- 1: Aggresome
-- 2: Cell Junctions
-- 3: Centriolar satellite
-- 4: Centrosome
-- 5: Cytokinetic bridge
-- 6: Cytoplasmic bodies
-- 7: Cytosol
-- 8: Endoplasmic reticulum
-- 9: Endosomes
+The model predicts 31 classes indexed 0-30 (see `inference.py:10-42`), corresponding to `prob00`-`prob30` in CSV output:
+- 00: Actin filaments
+- 01: Aggresome
+- 02: Cell Junctions
+- 03: Centriolar satellite
+- 04: Centrosome
+- 05: Cytokinetic bridge
+- 06: Cytoplasmic bodies
+- 07: Cytosol
+- 08: Endoplasmic reticulum
+- 09: Endosomes
 - 10: Focal adhesion sites
 - 11: Golgi apparatus
 - 12: Intermediate filaments

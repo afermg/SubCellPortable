@@ -188,42 +188,42 @@ probs = np.load("results/cell1_probabilities.npy")      # Shape: (31,)
 
 ## 🎯 Subcellular Location Classes
 
-The model predicts 31 subcellular locations:
+The model predicts 31 subcellular locations (indexed 0-30, corresponding to `prob00`-`prob30`):
 
 <details>
 <summary>View all 31 classes</summary>
 
-1. Actin filaments
-2. Aggresome
-3. Cell Junctions
-4. Centriolar satellite
-5. Centrosome
-6. Cytokinetic bridge
-7. Cytoplasmic bodies
-8. Cytosol
-9. Endoplasmic reticulum
-10. Endosomes
-11. Focal adhesion sites
-12. Golgi apparatus
-13. Intermediate filaments
-14. Lipid droplets
-15. Lysosomes
-16. Microtubules
-17. Midbody
-18. Mitochondria
-19. Mitotic chromosome
-20. Mitotic spindle
-21. Nuclear bodies
-22. Nuclear membrane
-23. Nuclear speckles
-24. Nucleoli
-25. Nucleoli fibrillar center
-26. Nucleoli rim
-27. Nucleoplasm
-28. Peroxisomes
-29. Plasma membrane
-30. Vesicles
-31. Negative
+00. Actin filaments
+01. Aggresome
+02. Cell Junctions
+03. Centriolar satellite
+04. Centrosome
+05. Cytokinetic bridge
+06. Cytoplasmic bodies
+07. Cytosol
+08. Endoplasmic reticulum
+09. Endosomes
+10. Focal adhesion sites
+11. Golgi apparatus
+12. Intermediate filaments
+13. Lipid droplets
+14. Lysosomes
+15. Microtubules
+16. Midbody
+17. Mitochondria
+18. Mitotic chromosome
+19. Mitotic spindle
+20. Nuclear bodies
+21. Nuclear membrane
+22. Nuclear speckles
+23. Nucleoli
+24. Nucleoli fibrillar center
+25. Nucleoli rim
+26. Nucleoplasm
+27. Peroxisomes
+28. Plasma membrane
+29. Vesicles
+30. Negative
 
 </details>
 
