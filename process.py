@@ -145,112 +145,149 @@ def create_dataloader(
         persistent_workers=config.num_workers > 0,
     )
 
-    logger.info(f"Processing {len(dataset)} images in batches of {config.batch_size}")
-    logger.info(f"Using {config.num_workers} workers for data loading")
+    args = argparser.parse_args()
+    for key in args.__dict__:
+        if args.__dict__[key]: config[key] = args.__dict__[key]
 
-    return dataloader
+# If you want to use a configuration file with your script, add it here
+with open("config.yaml", "r") as file:
+    config_contents = yaml.safe_load(file)
+    if config_contents:
+        for key, value in config_contents.items():
+            config[key] = value
 
-
-def process_batch_results(
-    batch_results: list,
-    output_prefixes: list,
-    classifier_paths: list,
-    config: SubCellConfig,
-) -> None:
-    """Process and log batch results.
-
-    Args:
-        batch_results: List of (embedding, probabilities) tuples
-        output_prefixes: List of output prefixes for logging
-        classifier_paths: Classifier paths (None if embeddings_only)
-        config: Configuration object
-    """
-    if config.quiet:
-        return
-
-    for i, (embedding, probabilities) in enumerate(batch_results):
-        output_prefix = output_prefixes[i]
-        log_message = f"- Saved results for {output_prefix}"
-
-        if classifier_paths and probabilities is not None:
-            _, _, top_3_names, _ = compute_top_predictions(probabilities)
-            log_message += f", locations predicted [{top_3_names}]"
-
-        config.log.info(log_message)
+# Log the start time and the final configuration so you can keep track of what you did
+config["log"].info("Start: " + datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"))
+config["log"].info("Parameters used:")
+config["log"].info(config)
+config["log"].info("----------")
 
 
-def run_inference() -> None:
-    """Main inference pipeline."""
-    # Track overall timing
-    start_time = datetime.datetime.now()
+try:
+    # We load the selected model information
+    with open(
+        os.path.join(
+            "models",
+            config["model_channels"],
+            config["model_type"],
+            "model_config.yaml",
+        ),
+        "r",
+    ) as config_buffer:
+        model_config_file = yaml.safe_load(config_buffer)
 
-    # Setup - load config and get file paths
-    config, config_file, path_list = load_config()
+    classifier_paths = None
+    if "classifier_paths" in model_config_file:
+        classifier_paths = model_config_file["classifier_paths"]
+    encoder_path = model_config_file["encoder_path"]
 
-    # Setup logging with output_dir if specified
-    if config.output_dir:
-        log_path = os.path.join(config.output_dir, "log.txt")
-        os.makedirs(config.output_dir, exist_ok=True)
-        logger = setup_logging(log_path)
+    needs_update = config["update_model"]
+    for curr_classifier in classifier_paths:
+        needs_update = needs_update or not os.path.isfile(curr_classifier)
+    needs_update = needs_update or not os.path.isfile(encoder_path)
+
+    # Checking for model update
+    if needs_update:
+        config["log"].info("- Downloading models...")
+        with open("models_urls.yaml", "r") as urls_file:
+            url_info = yaml.safe_load(urls_file)
+
+            for index, curr_url_info in enumerate(url_info[config["model_channels"]][config["model_type"]]["classifiers"]):
+                if curr_url_info.startswith("s3://"):
+                    try:
+                        s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+                        urlcomponents = urlparse(curr_url_info)
+                        s3.download_file(urlcomponents.netloc, urlcomponents.path[1:], classifier_paths[index])
+                        config["log"].info("  - " + classifier_paths[index] + " updated.")
+                    except ClientError as e:
+                        config["log"].warning("  - " + classifier_paths[index] + " s3 url " + curr_url_info + " not working.")
+                else:
+                    response = requests.get(curr_url_info)
+                    if response.status_code == 200:
+                        with open(classifier_paths[index], "wb") as downloaded_file:
+                            downloaded_file.write(response.content)
+                        config["log"].info("  - " + classifier_paths[index] + " updated.")
+                    else:
+                        config["log"].warning("  - " + classifier_paths[index] + " url " + curr_url_info + " not found.")
+
+            curr_url_info = url_info[config["model_channels"]][config["model_type"]]["encoder"]
+            if curr_url_info.startswith("s3://"):
+                try:
+                    s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+                    urlcomponents = urlparse(curr_url_info)
+                    s3.download_file(urlcomponents.netloc, urlcomponents.path[1:], encoder_path)
+                    config["log"].info("  - " + encoder_path + " updated.")
+                except ClientError as e:
+                    config["log"].warning("  - " + encoder_path + " s3 url " + curr_url_info + " not working.")
+            else:
+                response = requests.get(curr_url_info)
+                if response.status_code == 200:
+                    with open(encoder_path, "wb") as downloaded_file:
+                        downloaded_file.write(response.content)
+                    config["log"].info("  - " + encoder_path + " updated.")
+                else:
+                    config["log"].warning("  - " + encoder_path + " url " + curr_url_info + " not found.")
+
+    model_config = model_config_file.get("model_config")
+    model = ViTPoolClassifier(model_config)
+    model.load_model_dict(encoder_path, classifier_paths)
+    model.eval()
+
+    if torch.cuda.is_available() and config["gpu"] != -1:
+        device = torch.device("cuda:" + str(config["gpu"]))
     else:
-        logger = setup_logging()
+        config["log"].warning("CUDA not available. Using CPU.")
+        device = torch.device("cpu")
+    model.to(device)
 
-    config.log = logger
+    # if we want to generate a csv result
+    if config["create_csv"]:
+        final_columns = [
+            "id"
+        ]
+        if classifier_paths:
+            final_columns.extend([
+                "top_class_name",
+                "top_class",
+                "top_3_classes_names",
+                "top_3_classes",
+            ])
+            prob_columns = []
+            for i in range(31):
+                prob_columns.append("prob" + "%02d" % (i,))
+            final_columns.extend(prob_columns)
+            feat_columns = []
+        for i in range(1536):
+            feat_columns.append("feat" + "%04d" % (i,))
+        final_columns.extend(feat_columns)
+        df = pd.DataFrame(columns=final_columns)
 
-    # Log start
-    logger.info("=" * 60)
-    logger.info("SubCellPortable - Subcellular Localization Inference")
-    logger.info("=" * 60)
-    logger.info(f"Start: {start_time.strftime('%Y/%m/%d %H:%M:%S')}")
-    logger.info(f"Config file: {config_file}")
-    logger.info(f"Input CSV: {path_list}")
-    logger.info("Parameters:")
-    for key, value in config.to_dict().items():
-        logger.info(f"  {key}: {value}")
-    logger.info("-" * 60)
+    # We iterate over each set of images to process
+    if os.path.exists("./path_list.csv"):
+        path_list = open("./path_list.csv", "r")
+        for curr_set in path_list:
 
-    try:
-        # Ensure models are available
-        classifier_paths, encoder_path, model_config = ensure_models_available(
-            config.model_channels,
-            config.model_type,
-            config.embeddings_only,
-            config.update_model,
-        )
+            if curr_set.strip() != "" and not curr_set.startswith("#"):
+                curr_set_arr = curr_set.split(",")
+                # We create the output folder
+                os.makedirs(curr_set_arr[4].strip(), exist_ok=True)
+                # We load the images as numpy arrays
+                cell_data = []
+                if "r" in config["model_channels"]:
+                    cell_data.append([image_utils.read_grayscale_image(curr_set_arr[0].strip())])
+                if "y" in config["model_channels"]:
+                    cell_data.append([image_utils.read_grayscale_image(curr_set_arr[1].strip())])
+                if "b" in config["model_channels"]:
+                    cell_data.append([image_utils.read_grayscale_image(curr_set_arr[2].strip())])
+                if "g" in config["model_channels"]:
+                    cell_data.append([image_utils.read_grayscale_image(curr_set_arr[3].strip())])
 
-        # Load model
-        model = ViTPoolClassifier(model_config)
-        classifier_paths_for_loading = classifier_paths if classifier_paths is not None else []
-        model.load_model_dict(encoder_path, classifier_paths_for_loading)
-        model.eval()
-
-        # Log mode
-        if config.embeddings_only:
-            logger.info("🔍 Running in EMBEDDINGS ONLY mode - no classification")
-        else:
-            logger.info("🎯 Running in FULL mode - embeddings + classification")
-
-        # Setup device
-        device = setup_device(config.gpu, logger)
-        model.to(device)
-
-        # Create dataloader
-        dataloader = create_dataloader(path_list, config, logger)
-
-        # Check CSV format and validate output_dir requirement
-        uses_old_format = dataloader.dataset.uses_old_format
-
-        if uses_old_format:
-            logger.warning("⚠️  DEPRECATION WARNING: Your path_list.csv uses the old format with 'output_folder' column.")
-            logger.warning("This format is deprecated and will be removed in a future version.")
-            logger.warning("Please update to the new format: remove 'output_folder' column and use --output_dir instead.")
-            logger.warning("See documentation for migration guide.")
-        else:
-            # New format requires output_dir
-            if not config.output_dir:
-                raise ValueError(
-                    "output_dir is required when using new CSV format (without output_folder column). "
-                    "Please specify via --output_dir or in config.yaml"
+                # We run the model in inference
+                embedding, probabilities = inference.run_model(
+                    model,
+                    cell_data,
+                    device,
+                    os.path.join(curr_set_arr[4], curr_set_arr[5].strip()),
                 )
 
         # Initialize output handlers
