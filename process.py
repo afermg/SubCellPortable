@@ -1,96 +1,148 @@
-import argparse
+"""Main inference orchestration for SubCellPortable."""
+
 import datetime
 import logging
 import os
 import sys
-import pandas as pd
-import requests
 import torch
 import yaml
-import boto3
-from botocore import UNSIGNED
-from botocore.config import Config
-from botocore.exceptions import ClientError
-from urllib.parse import urlparse
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 import inference
-import image_utils
 from vit_model import ViTPoolClassifier
+from dataset import SubCellDataset, collate_fn
+from config import SubCellConfig, PATH_LIST_CSV, LOG_FILE
+from cli import parse_args
+from model_loader import ensure_models_available
+from output_handlers import CSVOutputHandler, H5ADOutputHandler, compute_top_predictions
 
-
+# Set CUDA device ordering
 os.environ["DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
 
-# This is the log configuration. It will log everything to a file AND the console
-logging.basicConfig(
-    filename="log.txt",
-    encoding="utf-8",
-    format="%(levelname)s: %(message)s",
-    filemode="w",
-    level=logging.INFO,
-)
-console = logging.StreamHandler()
-logging.getLogger().addHandler(console)
-logger = logging.getLogger("SubCell inference")
+def setup_logging(log_file: str = LOG_FILE) -> logging.Logger:
+    """Set up logging configuration.
 
-# This is the general configuration variable. We are going to use the special key "log" in the dictionary to use the log in our code
-config = {"log": logger}
+    Args:
+        log_file: Path to log file
 
-# If you want to use constants with your script, add them here
-config["model_channels"] = "rybg"
-config["model_type"] = "mae_contrast_supcon_model"
-config["update_model"] = False
-config["create_csv"] = False
-config["gpu"] = -1
+    Returns:
+        Configured logger
+    """
+    logging.basicConfig(
+        filename=log_file,
+        encoding="utf-8",
+        format="%(levelname)s: %(message)s",
+        filemode="w",
+        level=logging.INFO,
+    )
+    console = logging.StreamHandler()
+    logging.getLogger().addHandler(console)
+    logger = logging.getLogger("SubCell inference")
+    return logger
 
-# If you want to use command line parameters with your script, add them here
-if len(sys.argv) > 1:
-    argparser = argparse.ArgumentParser(
-        description="Please input the following parameters"
+
+def load_config() -> tuple[SubCellConfig, str, str]:
+    """Load configuration from multiple sources.
+
+    Configuration priority (highest to lowest):
+    1. Command-line arguments
+    2. config.yaml file (or custom config file)
+    3. Default values
+
+    Returns:
+        Tuple of (config object, config_file_path, path_list_path)
+    """
+    # Parse CLI args (only explicitly provided args)
+    cli_args = parse_args()
+
+    # Get config file path (default or custom)
+    config_file = cli_args.pop("config", "config.yaml")
+
+    # Get path_list file path (default or custom)
+    path_list = cli_args.pop("path_list", PATH_LIST_CSV)
+
+    # Start with defaults
+    config_dict = {}
+
+    # Load from config file if exists
+    if os.path.exists(config_file):
+        with open(config_file, "r") as f:
+            yaml_config = yaml.safe_load(f)
+            if yaml_config:
+                config_dict.update(yaml_config)
+
+    # Override with command-line arguments
+    # Note: cli_args only contains explicitly provided arguments (not defaults)
+    # This ensures config file values aren't overwritten by CLI defaults
+    config_dict.update(cli_args)
+
+    # Create config object (with validation)
+    return SubCellConfig.from_dict(config_dict), config_file, path_list
+
+
+def setup_device(gpu_id: int, logger: logging.Logger) -> torch.device:
+    """Set up computing device (CPU or GPU).
+
+    Args:
+        gpu_id: GPU ID to use (-1 for CPU)
+        logger: Logger instance
+
+    Returns:
+        Configured torch device
+    """
+    if torch.cuda.is_available() and gpu_id != -1:
+        device = torch.device(f"cuda:{gpu_id}")
+        logger.info(f"Using GPU: cuda:{gpu_id}")
+    else:
+        if gpu_id != -1:
+            logger.warning(f"GPU {gpu_id} requested but CUDA not available. Using CPU.")
+        else:
+            logger.info("Using CPU")
+        device = torch.device("cpu")
+    return device
+
+
+def create_dataloader(
+    csv_path: str,
+    config: SubCellConfig,
+    logger: logging.Logger
+) -> DataLoader:
+    """Create DataLoader for batch processing.
+
+    Args:
+        csv_path: Path to CSV file with image paths
+        config: Configuration object
+        logger: Logger instance
+
+    Returns:
+        Configured DataLoader
+
+    Raises:
+        FileNotFoundError: If CSV file doesn't exist
+    """
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(
+            f"Input file not found: {csv_path}. "
+            f"Please create this file with your image paths."
+        )
+
+    dataset = SubCellDataset(
+        csv_path,
+        config.model_channels
     )
-    argparser.add_argument(
-        "-c",
-        "--model_channels",
-        help="channel images to be used [rybg, rbg, ybg, bg]",
-        default="rybg",
-        type=str,
-    )
-    argparser.add_argument(
-        "-t",
-        "--model_type",
-        help="model type to be used [mae_contrast_supcon_model, vit_supcon_model]",
-        default="mae_contrast_supcon_model",
-        type=str,
-    )
-    argparser.add_argument(
-        '-u', '--update_model',
-        action='store_true',
-        help='download/update the selected model files'
-    )
-    argparser.add_argument(
-        '--no-update_model',
-        action='store_false',
-        dest='update_model',
-        help='do not download/update the selected model files'
-    )
-    argparser.add_argument(
-        '-csv', '--create_csv',
-        action='store_true',
-        help='generate a combined CSV of probabilities and embeddings'
-    )
-    argparser.add_argument(
-        '--no-create_csv',
-        action='store_false',
-        dest='create_csv',
-        help='do not generate a combined CSV'
-    )
-    argparser.add_argument(
-        "-g",
-        "--gpu",
-        help="the GPU id to use [0, 1, 2, 3]. -1 for CPU usage",
-        default=-1,
-        type=int,
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        prefetch_factor=config.prefetch_factor,
+        collate_fn=collate_fn,
+        shuffle=False,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=config.num_workers > 0,
     )
 
     args = argparser.parse_args()
@@ -238,44 +290,196 @@ try:
                     os.path.join(curr_set_arr[4], curr_set_arr[5].strip()),
                 )
 
-                if classifier_paths:
-                    curr_probs_l = probabilities.tolist()
-                    max_location_class = curr_probs_l.index(max(curr_probs_l))
-                    max_location_name = inference.CLASS2NAME[max_location_class]
-                    max_3_location_classes = sorted(
-                        range(len(curr_probs_l)), key=lambda sub: curr_probs_l[sub]
-                    )[-3:]
-                    max_3_location_classes.reverse()
-                    max_3_location_names = (
-                        inference.CLASS2NAME[max_3_location_classes[0]]
-                        + ","
-                        + inference.CLASS2NAME[max_3_location_classes[1]]
-                        + ","
-                        + inference.CLASS2NAME[max_3_location_classes[2]]
-                    )
+        # Initialize output handlers
+        csv_handler = None
+        h5ad_handler = None
 
-                # Save results in csv format
-                if config["create_csv"]:
-                    new_row = []
-                    new_row.append(curr_set_arr[5].strip())
-                    if classifier_paths:
-                        new_row.append(max_location_name)
-                        new_row.append(max_location_class)
-                        new_row.append(max_3_location_names)
-                        new_row.append(",".join(map(str, max_3_location_classes)))
-                        new_row.extend(probabilities)
-                    new_row.extend(embedding)
-                    df.loc[len(df.index)] = new_row
+        if config.create_csv:
+            csv_handler = CSVOutputHandler(has_classifier=classifier_paths is not None)
 
-                log_message = "- Saved results for " + curr_set_arr[5].strip()
-                if classifier_paths:
-                    log_message = log_message + ", locations predicted [" + max_3_location_names + "]"
-                config["log"].info(log_message)
+        if config.output_format == "combined":
+            if uses_old_format:
+                # Old format: use first row's output_folder
+                first_item = dataloader.dataset.data_list[0]
+                h5ad_handler = H5ADOutputHandler(first_item["output_folder"])
+            else:
+                # New format: use output_dir
+                h5ad_handler = H5ADOutputHandler(config.output_dir)
 
-        if config["create_csv"]:
-            df.to_csv("result.csv", index=False)
-except Exception as e:
-    config["log"].error("- " + str(e))
+        # Process batches
+        pending_executors = []
+        pending_futures = []
 
-config["log"].info("----------")
-config["log"].info("End: " + datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"))
+        for batch in tqdm(dataloader, desc="Processing batches", unit="batch"):
+            images = batch["images"]
+            output_prefixes = batch["output_prefixes"]
+
+            # Prepare output paths based on format
+            if uses_old_format:
+                # Old format: use per-row output_folder from CSV
+                output_folders = batch["output_folders"]
+                # Create output directories
+                for output_folder in set(output_folders):
+                    os.makedirs(output_folder, exist_ok=True)
+                # Prepare output paths
+                output_paths = [
+                    os.path.join(output_folders[i], output_prefixes[i])
+                    for i in range(len(output_folders))
+                ]
+            else:
+                # New format: use config.output_dir + output_prefix
+                # output_prefix can include subdirectories (e.g., "experiment_A/cell1_")
+                output_paths = []
+                for prefix in output_prefixes:
+                    full_path = os.path.join(config.output_dir, prefix)
+                    # Create subdirectories if prefix contains them
+                    output_dir_for_file = os.path.dirname(full_path)
+                    if output_dir_for_file:
+                        os.makedirs(output_dir_for_file, exist_ok=True)
+                    output_paths.append(full_path)
+
+            # Run inference
+            try:
+                inference_result = inference.run_model(
+                    model, images, device, output_paths,
+                    save_attention_maps=config.save_attention_maps,
+                    embeddings_only=config.embeddings_only,
+                    output_format=config.output_format,
+                    async_saving=config.async_saving
+                )
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    logger.error("=" * 60)
+                    logger.error("❌ CUDA OUT OF MEMORY ERROR")
+                    logger.error("=" * 60)
+                    logger.error(f"Current configuration:")
+                    logger.error(f"  batch_size: {config.batch_size}")
+                    logger.error(f"  num_workers: {config.num_workers}")
+                    logger.error(f"  GPU: {config.gpu}")
+                    logger.error("")
+                    logger.error("💡 Suggestions to fix:")
+                    logger.error(f"  1. Reduce batch_size: -b {max(1, config.batch_size // 2)}")
+                    logger.error(f"  2. Use fewer workers: -w {max(1, config.num_workers // 2)}")
+                    logger.error("  3. Switch to CPU: -g -1 (slower but uses RAM instead)")
+                    logger.error("  4. Close other GPU applications")
+                    logger.error("=" * 60)
+                raise
+
+            # Handle different return formats
+            if config.output_format == "combined":
+                batch_results = inference_result
+            elif config.async_saving:
+                batch_results, (executor, futures) = inference_result
+                pending_executors.append(executor)
+                pending_futures.extend(futures)
+            else:
+                batch_results = inference_result
+
+            # Free GPU memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            # Extract embeddings and probabilities
+            embeddings = [result[0] for result in batch_results]
+            probabilities_list = [result[1] for result in batch_results]
+
+            # Add to output handlers
+            if csv_handler:
+                csv_handler.add_batch(output_prefixes, embeddings, probabilities_list)
+
+            if h5ad_handler:
+                h5ad_handler.add_batch(output_prefixes, embeddings, probabilities_list)
+
+            # Log progress
+            process_batch_results(
+                batch_results,
+                output_prefixes,
+                classifier_paths,
+                config
+            )
+
+        # Wait for async saves to complete
+        if config.async_saving and pending_futures:
+            logger.info(f"Waiting for {len(pending_futures)} async save operations...")
+            import concurrent.futures
+            concurrent.futures.wait(pending_futures)
+            for executor in pending_executors:
+                executor.shutdown(wait=True)
+            logger.info("All async saves completed")
+
+        # Save accumulated outputs
+        if csv_handler:
+            if uses_old_format or not config.output_dir:
+                # Old format or no output_dir: save to CWD
+                csv_handler.save("result.csv")
+            else:
+                # New format: save to output_dir
+                csv_path = os.path.join(config.output_dir, "result.csv")
+                csv_handler.save(csv_path)
+
+        if h5ad_handler:
+            h5ad_handler.save(embeddings_only=config.embeddings_only)
+
+        # Calculate timing statistics
+        end_time = datetime.datetime.now()
+        elapsed = end_time - start_time
+        total_images = len(dataloader.dataset)
+        images_per_sec = total_images / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
+
+        # Log success summary
+        logger.info("-" * 60)
+        logger.info("✓ Processing completed successfully")
+        logger.info(f"Total images processed: {total_images}")
+        logger.info(f"Total time: {elapsed}")
+        logger.info(f"Average speed: {images_per_sec:.2f} images/sec")
+        logger.info(f"Average time per image: {elapsed.total_seconds()/total_images:.4f} sec")
+
+        # Log output location
+        if config.output_dir:
+            logger.info(f"Output saved to: {os.path.abspath(config.output_dir)}")
+            if config.create_csv:
+                logger.info(f"  - result.csv")
+            if config.output_format == "combined":
+                logger.info(f"  - embeddings.h5ad")
+            logger.info(f"  - log.txt")
+            if config.output_format == "individual":
+                logger.info(f"  - {total_images} embedding files (*_embedding.npy)")
+                if not config.embeddings_only:
+                    logger.info(f"  - {total_images} probability files (*_probabilities.npy)")
+                if config.save_attention_maps:
+                    logger.info(f"  - {total_images} attention maps (*_attention_map.png)")
+
+        # Clean up
+        del dataloader
+
+    except FileNotFoundError as e:
+        logger.error("-" * 60)
+        logger.error(f"✗ File not found: {e}")
+        logger.error("Please check that all input files exist.")
+        raise
+    except ValueError as e:
+        logger.error("-" * 60)
+        logger.error(f"✗ Configuration error: {e}")
+        logger.error("Please check your configuration and CSV format.")
+        raise
+    except RuntimeError as e:
+        logger.error("-" * 60)
+        logger.error(f"✗ Runtime error: {e}")
+        if "out of memory" in str(e).lower():
+            logger.error("Suggestion: Try reducing batch_size in config.yaml")
+        raise
+    except Exception as e:
+        logger.error("-" * 60)
+        logger.error(f"✗ Unexpected error: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+        raise
+
+    finally:
+        end_time = datetime.datetime.now()
+        logger.info("=" * 60)
+        logger.info(f"End: {end_time.strftime('%Y/%m/%d %H:%M:%S')}")
+        logger.info("=" * 60)
+
+
+if __name__ == "__main__":
+    run_inference()

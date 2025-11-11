@@ -1,8 +1,11 @@
+from typing import Tuple, List, Optional, Any
 import numpy as np
 import torch
 import torch.nn.functional as F
 from skimage.io import imsave
 from torchvision.utils import make_grid
+import concurrent.futures
+import os
 
 CLASS2NAME = {
     0: "Actin filaments",
@@ -73,15 +76,14 @@ CLASS2COLOR = {
 }
 
 
-def min_max_standardize(im):
-    min_val = torch.amin(im, dim=(1, 2, 3), keepdims=True)
-    max_val = torch.amax(im, dim=(1, 2, 3), keepdims=True)
+def save_attention_map(attn: torch.Tensor, input_shape: Tuple[int, int], output_path: str) -> None:
+    """Save attention map as PNG image.
 
-    im = (im - min_val) / (max_val - min_val + 1e-6)
-    return im
-
-
-def save_attention_map(attn, input_shape, output_path):
+    Args:
+        attn: Attention tensor
+        input_shape: Target (height, width) for interpolation
+        output_path: Path prefix for saving (will append _attention_map.png)
+    """
     attn = F.interpolate(attn, size=input_shape, mode="bilinear", align_corners=False)
     attn = make_grid(
         attn.permute(1, 0, 2, 3),
@@ -94,20 +96,155 @@ def save_attention_map(attn, input_shape, output_path):
     imsave(output_path + "_attention_map.png", attn)
 
 
-@torch.no_grad()
-def run_model(model, cell_crop, device, output_path):
-    cell_crop = np.stack(cell_crop, axis=1)
-    cell_crop = torch.from_numpy(cell_crop).float().to(device)
-    cell_crop = min_max_standardize(cell_crop)
+def _save_single_result(
+    output_path: str,
+    embedding: np.ndarray,
+    probabilities: Optional[np.ndarray],
+    embeddings_only: bool,
+    save_attention_map_flag: bool,
+    attention_map: Optional[torch.Tensor],
+    batch_data_shape: Tuple[int, ...]
+) -> None:
+    """Save results for a single image.
 
-    output = model(cell_crop)
-
-    probabilities = output.probabilities[0].cpu().numpy()
-    embedding = output.pool_op[0].cpu().numpy()
-
+    Args:
+        output_path: Path prefix for output files
+        embedding: Embedding vector to save
+        probabilities: Probability vector (None if embeddings_only)
+        embeddings_only: Whether to skip saving probabilities
+        save_attention_map_flag: Whether to save attention map
+        attention_map: Attention map tensor (single image, with batch dim)
+        batch_data_shape: Shape of original batch for attention map resizing
+    """
+    # Save embedding
     np.save(output_path + "_embedding.npy", embedding)
-    np.save(output_path + "_probabilities.npy", probabilities)
-    save_attention_map(
-        output.pool_attn, (cell_crop.shape[2], cell_crop.shape[3]), output_path
-    )
-    return np.array(embedding), np.array(probabilities)
+
+    # Save probability (only if not embeddings_only)
+    if not embeddings_only and probabilities is not None:
+        np.save(output_path + "_probabilities.npy", probabilities)
+
+    # Save attention map (configurable)
+    if save_attention_map_flag and attention_map is not None:
+        save_attention_map(attention_map, (batch_data_shape[2], batch_data_shape[3]), output_path)
+
+
+@torch.no_grad()
+def run_model(
+    model: Any,
+    batch_data: torch.Tensor,
+    device: torch.device,
+    output_paths: List[str],
+    save_attention_maps: bool = True,
+    embeddings_only: bool = False,
+    output_format: str = "individual",
+    async_saving: bool = False
+) -> Any:
+    """
+    Run model inference on a batch of images
+
+    Args:
+        model: The ViT model
+        batch_data: Tensor of shape (batch_size, channels, height, width)
+        device: Device to run inference on
+        output_paths: List of output paths for each image in batch
+        save_attention_maps: Whether to save attention map images (default: True)
+        embeddings_only: If True, skip probability computation and saves (default: False)
+        output_format: "individual" for separate files, "h5ad" for combined (default: "individual")
+        async_saving: If True, save files asynchronously (default: False)
+
+    Returns:
+        If async_saving=False: List of (embedding, probabilities) tuples for each image
+        If async_saving=True: (results_list, save_future) where save_future can be awaited
+        Note: probabilities will be None if embeddings_only=True
+    """
+    batch_data = batch_data.to(device)
+    # Note: Images are already normalized in dataset.py with minmax_norm=True
+
+    # Run model on entire batch
+    output = model(batch_data)
+
+    # Convert to numpy once for all items in batch
+    embeddings_batch = output.pool_op.cpu().numpy()
+
+    # Only compute probabilities if not in embeddings_only mode
+    probabilities_batch = None
+    if not embeddings_only:
+        # Apply softmax to normalize probabilities (so they sum to 1.0)
+        probabilities_batch = F.softmax(output.probabilities, dim=-1).cpu().numpy()
+
+    # Extract attention maps if needed (before freeing GPU memory)
+    attention_maps = None
+    if save_attention_maps and output.pool_attn is not None:
+        attention_maps = output.pool_attn.cpu()  # Move to CPU for saving
+
+    # Free GPU memory immediately - critical for async mode
+    del output
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # Prepare results
+    results = []
+    for i, output_path in enumerate(output_paths):
+        embedding = embeddings_batch[i]
+        probabilities = probabilities_batch[i] if probabilities_batch is not None else None
+        results.append((embedding, probabilities))
+
+    # Handle file saving based on mode
+    if output_format == "combined":
+        # For combined format, return results without saving - will be collected and saved at end
+        return results
+
+    elif async_saving:
+        # Return immediately, save asynchronously
+        save_future = _async_save_batch(
+            results, output_paths, embeddings_only, save_attention_maps,
+            attention_maps, batch_data, output_format
+        )
+        return results, save_future
+    else:
+        # Synchronous saving (original behavior)
+        _sync_save_batch(
+            results, output_paths, embeddings_only, save_attention_maps,
+            attention_maps, batch_data, output_format
+        )
+        return results
+
+
+def _sync_save_batch(results, output_paths, embeddings_only, save_attention_maps, attention_maps, batch_data, output_format):
+    """Synchronous batch saving (original behavior)"""
+    for i, output_path in enumerate(output_paths):
+        embedding, probabilities = results[i]
+        attention_map = attention_maps[i:i+1] if attention_maps is not None else None
+
+        _save_single_result(
+            output_path, embedding, probabilities, embeddings_only,
+            save_attention_maps, attention_map, batch_data.shape
+        )
+
+
+def _async_save_batch(results, output_paths, embeddings_only, save_attention_maps, attention_maps, batch_data, output_format):
+    """Asynchronous batch saving using ThreadPoolExecutor
+
+    Returns:
+        Tuple of (executor, futures) - caller should wait on futures and shutdown executor
+    """
+    # Individual files - can parallelize
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+    def save_single_item(i):
+        output_path = output_paths[i]
+        embedding, probabilities = results[i]
+        attention_map = attention_maps[i:i+1] if attention_maps is not None else None
+
+        _save_single_result(
+            output_path, embedding, probabilities, embeddings_only,
+            save_attention_maps, attention_map, batch_data.shape
+        )
+
+    # Submit all save tasks and return futures
+    futures = [executor.submit(save_single_item, i) for i in range(len(output_paths))]
+
+    return executor, futures
+
+
+

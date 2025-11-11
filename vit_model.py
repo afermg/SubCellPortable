@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple, Union
+import logging
 
 import torch
 from transformers.modeling_outputs import BaseModelOutput
@@ -13,9 +14,10 @@ from transformers.models.vit.modeling_vit import (
     ViTPatchEmbeddings,
     ViTPooler,
     ViTPreTrainedModel,
-    ViTSdpaAttention,
 )
 from torch import nn, Tensor
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -71,9 +73,8 @@ class ViTLayer(nn.Module):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
-        self.attention = (
-            ViTAttention(config) if not sdpa_attn else ViTSdpaAttention(config)
-        )
+        # Note: sdpa_attn parameter kept for compatibility but uses ViTAttention
+        self.attention = ViTAttention(config)
         self.intermediate = ViTIntermediate(config)
         self.output = ViTOutput(config)
         self.layernorm_before = nn.LayerNorm(
@@ -294,7 +295,10 @@ class ViTPoolClassifier(nn.Module):
     def __init__(self, config: Dict):
         super(ViTPoolClassifier, self).__init__()
 
-        self.vit_config = ViTConfig(**config["vit_model"])
+        vit_model_config = config["vit_model"].copy()
+        # Use eager attention to avoid SDPA warnings when output_attentions=True
+        vit_model_config["attn_implementation"] = "eager"
+        self.vit_config = ViTConfig(**vit_model_config)
 
         self.encoder = ViTInferenceModel(self.vit_config, add_pooling_layer=False)
 
@@ -323,13 +327,13 @@ class ViTPoolClassifier(nn.Module):
         classifier_paths: Union[str, List[str]],
         device="cpu",
     ):
-        checkpoint = torch.load(encoder_path, map_location=device)
+        checkpoint = torch.load(encoder_path, map_location=device, weights_only=False)
         encoder_ckpt = {
             k[len("encoder.") :]: v for k, v in checkpoint.items() if "encoder." in k
         }
 
         status = self.encoder.load_state_dict(encoder_ckpt)
-        print(f"Encoder status: {status}")
+        logger.info(f"Encoder status: {status}")
 
         pool_ckpt = {
             k.replace("pool_model.", ""): v
@@ -339,9 +343,9 @@ class ViTPoolClassifier(nn.Module):
         pool_ckpt = {k.replace("1.", "0."): v for k, v in pool_ckpt.items()}
         if pool_ckpt and self.pool_model:
             status = self.pool_model.load_state_dict(pool_ckpt)
-            print(f"Pool model status: {status}")
+            logger.info(f"Pool model status: {status}")
         else:
-            print("No pool model found in checkpoint")
+            logger.info("No pool model found in checkpoint")
 
         if isinstance(classifier_paths, str):
             classifier_paths = [classifier_paths]
@@ -350,7 +354,7 @@ class ViTPoolClassifier(nn.Module):
             [self.make_classifier() for _ in range(len(classifier_paths))]
         )
         for i, classifier_path in enumerate(classifier_paths):
-            classifier_ckpt = torch.load(classifier_path, map_location=device)
+            classifier_ckpt = torch.load(classifier_path, map_location=device, weights_only=False)
             classifier_ckpt = {
                 k.replace("3.", "2."): v for k, v in classifier_ckpt.items()
             }
@@ -358,7 +362,7 @@ class ViTPoolClassifier(nn.Module):
                 k.replace("6.", "4."): v for k, v in classifier_ckpt.items()
             }
             status = self.classifiers[i].load_state_dict(classifier_ckpt)
-            print(f"Classifier {i+1} status: {status}")
+            logger.info(f"Classifier {i+1} status: {status}")
 
     def forward(self, x: torch.Tensor) -> ViTPoolModelOutput:
         b, c, h, w = x.shape
@@ -370,11 +374,16 @@ class ViTPoolClassifier(nn.Module):
             pool_op = torch.mean(outputs.last_hidden_state, dim=1)
             pool_attn = None
 
-        probs = torch.stack(
-            [self.sigmoid(classifier(pool_op)) for classifier in self.classifiers],
-            dim=1,
-        )
-        probs = torch.mean(probs, dim=1)
+        # Handle case when no classifiers are loaded (embeddings_only mode)
+        if len(self.classifiers) > 0:
+            probs = torch.stack(
+                [self.sigmoid(classifier(pool_op)) for classifier in self.classifiers],
+                dim=1,
+            )
+            probs = torch.mean(probs, dim=1)
+        else:
+            # Return dummy probabilities with correct shape for embeddings_only mode
+            probs = torch.zeros(pool_op.shape[0], self.num_classes, device=pool_op.device)
 
         h_feat = h // self.vit_config.patch_size
         w_feat = w // self.vit_config.patch_size
@@ -383,9 +392,11 @@ class ViTPoolClassifier(nn.Module):
             b, self.vit_config.num_attention_heads, h_feat, w_feat
         )
 
-        pool_attn = pool_attn[:, :, 1:].reshape(
-            b, self.pool_model.num_heads, h_feat, w_feat
-        )
+        # Handle pool_attn reshaping (only if pool_model exists)
+        if pool_attn is not None:
+            pool_attn = pool_attn[:, :, 1:].reshape(
+                b, self.pool_model.num_heads, h_feat, w_feat
+            )
 
         return ViTPoolModelOutput(
             last_hidden_state=outputs.last_hidden_state,
