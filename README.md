@@ -4,11 +4,11 @@
 
 [![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![DOI](https://img.shields.io/badge/DOI-10.1101%2F2024.12.06.627299-blue)](https://www.biorxiv.org/content/10.1101/2024.12.06.627299v1)
+[![DOI](https://img.shields.io/badge/DOI-10.1101%2F2024.12.06.627299-blue)](https://www.biorxiv.org/content/10.1101/2024.12.06.627299v2)
 
 SubCellPortable provides a streamlined interface for running the [SubCell model](https://github.com/CellProfiling/subcell-embed) on IF microscopy images. Generate single-cell embeddings that encode cell morphology or protein localization and predict protein subcellular localization from multi-channel fluorescence microscopy images.
 
-**📄 Preprint**: [SubCell: Subcellular protein localization foundation model](https://www.biorxiv.org/content/10.1101/2024.12.06.627299v1) (Gupta et al., 2024)
+**📄 Preprint**: [SubCell: Proteome-aware vision foundation models for microscopy capture single-cell biology](https://www.biorxiv.org/content/10.1101/2024.12.06.627299v2) (Gupta et al., 2024)
 
 ---
 
@@ -260,8 +260,8 @@ If you use SubCellPortable in your research, please cite:
 
 ```bibtex
 @article{gupta2024subcell,
-  title={SubCell: Subcellular protein localization foundation model},
-  author={Gupta, Ankit and others},
+  title={SubCell: Proteome-aware vision foundation models for microscopy capture single-cell biology},
+  author={Gupta, Ankit and Wefers, Zoe and Kahnert, Konstantin and Hansen, Jan N. and Leineweber, Will and Cesnik, Anthony and Lu, Dan and Axelsson, Ulrika and Balllosera Navarro, Frederic and Karaletsos, Theofanis and Lundberg, Emma},
   journal={bioRxiv},
   year={2024},
   doi={10.1101/2024.12.06.627299}
