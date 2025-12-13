@@ -1,11 +1,10 @@
-from typing import Tuple, List, Optional, Any
+import concurrent.futures
+from typing import Any, List, Optional, Tuple
+
 import numpy as np
 import torch
 import torch.nn.functional as F
-from skimage.io import imsave
 from torchvision.utils import make_grid
-import concurrent.futures
-import os
 
 CLASS2NAME = {
     0: "Actin filaments",
@@ -76,7 +75,9 @@ CLASS2COLOR = {
 }
 
 
-def save_attention_map(attn: torch.Tensor, input_shape: Tuple[int, int], output_path: str) -> None:
+def save_attention_map(
+    attn: torch.Tensor, input_shape: Tuple[int, int], output_path: str
+) -> None:
     """Save attention map as PNG image.
 
     Args:
@@ -103,7 +104,7 @@ def _save_single_result(
     embeddings_only: bool,
     save_attention_map_flag: bool,
     attention_map: Optional[torch.Tensor],
-    batch_data_shape: Tuple[int, ...]
+    batch_data_shape: Tuple[int, ...],
 ) -> None:
     """Save results for a single image.
 
@@ -125,7 +126,9 @@ def _save_single_result(
 
     # Save attention map (configurable)
     if save_attention_map_flag and attention_map is not None:
-        save_attention_map(attention_map, (batch_data_shape[2], batch_data_shape[3]), output_path)
+        save_attention_map(
+            attention_map, (batch_data_shape[2], batch_data_shape[3]), output_path
+        )
 
 
 @torch.no_grad()
@@ -137,7 +140,7 @@ def run_model(
     save_attention_maps: bool = True,
     embeddings_only: bool = False,
     output_format: str = "individual",
-    async_saving: bool = False
+    async_saving: bool = False,
 ) -> Any:
     """
     Run model inference on a batch of images
@@ -186,7 +189,9 @@ def run_model(
     results = []
     for i, output_path in enumerate(output_paths):
         embedding = embeddings_batch[i]
-        probabilities = probabilities_batch[i] if probabilities_batch is not None else None
+        probabilities = (
+            probabilities_batch[i] if probabilities_batch is not None else None
+        )
         results.append((embedding, probabilities))
 
     # Handle file saving based on mode
@@ -197,32 +202,65 @@ def run_model(
     elif async_saving:
         # Return immediately, save asynchronously
         save_future = _async_save_batch(
-            results, output_paths, embeddings_only, save_attention_maps,
-            attention_maps, batch_data, output_format
+            results,
+            output_paths,
+            embeddings_only,
+            save_attention_maps,
+            attention_maps,
+            batch_data,
+            output_format,
         )
         return results, save_future
     else:
         # Synchronous saving (original behavior)
         _sync_save_batch(
-            results, output_paths, embeddings_only, save_attention_maps,
-            attention_maps, batch_data, output_format
+            results,
+            output_paths,
+            embeddings_only,
+            save_attention_maps,
+            attention_maps,
+            batch_data,
+            output_format,
         )
         return results
 
 
-def _sync_save_batch(results, output_paths, embeddings_only, save_attention_maps, attention_maps, batch_data, output_format):
+def _sync_save_batch(
+    results,
+    output_paths,
+    embeddings_only,
+    save_attention_maps,
+    attention_maps,
+    batch_data,
+    output_format,
+):
     """Synchronous batch saving (original behavior)"""
     for i, output_path in enumerate(output_paths):
         embedding, probabilities = results[i]
-        attention_map = attention_maps[i:i+1] if attention_maps is not None else None
+        attention_map = (
+            attention_maps[i : i + 1] if attention_maps is not None else None
+        )
 
         _save_single_result(
-            output_path, embedding, probabilities, embeddings_only,
-            save_attention_maps, attention_map, batch_data.shape
+            output_path,
+            embedding,
+            probabilities,
+            embeddings_only,
+            save_attention_maps,
+            attention_map,
+            batch_data.shape,
         )
 
 
-def _async_save_batch(results, output_paths, embeddings_only, save_attention_maps, attention_maps, batch_data, output_format):
+def _async_save_batch(
+    results,
+    output_paths,
+    embeddings_only,
+    save_attention_maps,
+    attention_maps,
+    batch_data,
+    output_format,
+):
     """Asynchronous batch saving using ThreadPoolExecutor
 
     Returns:
@@ -234,11 +272,18 @@ def _async_save_batch(results, output_paths, embeddings_only, save_attention_map
     def save_single_item(i):
         output_path = output_paths[i]
         embedding, probabilities = results[i]
-        attention_map = attention_maps[i:i+1] if attention_maps is not None else None
+        attention_map = (
+            attention_maps[i : i + 1] if attention_maps is not None else None
+        )
 
         _save_single_result(
-            output_path, embedding, probabilities, embeddings_only,
-            save_attention_maps, attention_map, batch_data.shape
+            output_path,
+            embedding,
+            probabilities,
+            embeddings_only,
+            save_attention_maps,
+            attention_map,
+            batch_data.shape,
         )
 
     # Submit all save tasks and return futures
@@ -247,4 +292,28 @@ def _async_save_batch(results, output_paths, embeddings_only, save_attention_map
     return executor, futures
 
 
+# Overwrite run_model function, since we only care about the embeddings for Nahual
+@torch.no_grad()
+def run_model(
+    model: Any,
+    batch_data: torch.Tensor,
+    device: torch.device,
+) -> Any:
+    """
+    Run model inference on a batch of images
 
+    Args:
+        model: The ViT model
+        batch_data: Tensor of shape (batch_size, channels, height, width)
+        device: Device to run inference on
+    """
+    batch_data = batch_data.to(device)
+    # Note: Images are already normalized in dataset.py with minmax_norm=True
+
+    # Run model on entire batch
+    output = model(batch_data)
+
+    # Convert to numpy once for all items in batch
+    embeddings_batch = output.pool_op.cpu().numpy()
+
+    return embeddings_batch

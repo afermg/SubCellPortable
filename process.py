@@ -4,18 +4,20 @@ import datetime
 import logging
 import os
 import sys
+
 import torch
 import yaml
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import inference
-from vit_model import ViTPoolClassifier
-from dataset import SubCellDataset, collate_fn
-from config import SubCellConfig, PATH_LIST_CSV, LOG_FILE
 from cli import parse_args
+from config import LOG_FILE, PATH_LIST_CSV, SubCellConfig
 from model_loader import ensure_models_available
-from output_handlers import CSVOutputHandler, H5ADOutputHandler, compute_top_predictions
+from vit_model import ViTPoolClassifier
+
+# from output_handlers import CSVOutputHandler, H5ADOutputHandler, compute_top_predictions
+# from dataset import SubCellDataset, collate_fn
 
 # Set CUDA device ordering
 os.environ["DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -106,9 +108,7 @@ def setup_device(gpu_id: int, logger: logging.Logger) -> torch.device:
 
 
 def create_dataloader(
-    csv_path: str,
-    config: SubCellConfig,
-    logger: logging.Logger
+    csv_path: str, config: SubCellConfig, logger: logging.Logger
 ) -> DataLoader:
     """Create DataLoader for batch processing.
 
@@ -129,10 +129,7 @@ def create_dataloader(
             f"Please create this file with your image paths."
         )
 
-    dataset = SubCellDataset(
-        csv_path,
-        config.model_channels
-    )
+    dataset = SubCellDataset(csv_path, config.model_channels)
 
     dataloader = DataLoader(
         dataset,
@@ -220,7 +217,9 @@ def run_inference() -> None:
 
         # Load model
         model = ViTPoolClassifier(model_config)
-        classifier_paths_for_loading = classifier_paths if classifier_paths is not None else []
+        classifier_paths_for_loading = (
+            classifier_paths if classifier_paths is not None else []
+        )
         model.load_model_dict(encoder_path, classifier_paths_for_loading)
         model.eval()
 
@@ -241,9 +240,15 @@ def run_inference() -> None:
         uses_old_format = dataloader.dataset.uses_old_format
 
         if uses_old_format:
-            logger.warning("⚠️  DEPRECATION WARNING: Your path_list.csv uses the old format with 'output_folder' column.")
-            logger.warning("This format is deprecated and will be removed in a future version.")
-            logger.warning("Please update to the new format: remove 'output_folder' column and use --output_dir instead.")
+            logger.warning(
+                "⚠️  DEPRECATION WARNING: Your path_list.csv uses the old format with 'output_folder' column."
+            )
+            logger.warning(
+                "This format is deprecated and will be removed in a future version."
+            )
+            logger.warning(
+                "Please update to the new format: remove 'output_folder' column and use --output_dir instead."
+            )
             logger.warning("See documentation for migration guide.")
         else:
             # New format requires output_dir
@@ -304,11 +309,14 @@ def run_inference() -> None:
             # Run inference
             try:
                 inference_result = inference.run_model(
-                    model, images, device, output_paths,
+                    model,
+                    images,
+                    device,
+                    output_paths,
                     save_attention_maps=config.save_attention_maps,
                     embeddings_only=config.embeddings_only,
                     output_format=config.output_format,
-                    async_saving=config.async_saving
+                    async_saving=config.async_saving,
                 )
             except RuntimeError as e:
                 if "out of memory" in str(e).lower():
@@ -321,9 +329,15 @@ def run_inference() -> None:
                     logger.error(f"  GPU: {config.gpu}")
                     logger.error("")
                     logger.error("💡 Suggestions to fix:")
-                    logger.error(f"  1. Reduce batch_size: -b {max(1, config.batch_size // 2)}")
-                    logger.error(f"  2. Use fewer workers: -w {max(1, config.num_workers // 2)}")
-                    logger.error("  3. Switch to CPU: -g -1 (slower but uses RAM instead)")
+                    logger.error(
+                        f"  1. Reduce batch_size: -b {max(1, config.batch_size // 2)}"
+                    )
+                    logger.error(
+                        f"  2. Use fewer workers: -w {max(1, config.num_workers // 2)}"
+                    )
+                    logger.error(
+                        "  3. Switch to CPU: -g -1 (slower but uses RAM instead)"
+                    )
                     logger.error("  4. Close other GPU applications")
                     logger.error("=" * 60)
                 raise
@@ -355,16 +369,14 @@ def run_inference() -> None:
 
             # Log progress
             process_batch_results(
-                batch_results,
-                output_prefixes,
-                classifier_paths,
-                config
+                batch_results, output_prefixes, classifier_paths, config
             )
 
         # Wait for async saves to complete
         if config.async_saving and pending_futures:
             logger.info(f"Waiting for {len(pending_futures)} async save operations...")
             import concurrent.futures
+
             concurrent.futures.wait(pending_futures)
             for executor in pending_executors:
                 executor.shutdown(wait=True)
@@ -387,7 +399,9 @@ def run_inference() -> None:
         end_time = datetime.datetime.now()
         elapsed = end_time - start_time
         total_images = len(dataloader.dataset)
-        images_per_sec = total_images / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
+        images_per_sec = (
+            total_images / elapsed.total_seconds() if elapsed.total_seconds() > 0 else 0
+        )
 
         # Log success summary
         logger.info("-" * 60)
@@ -395,7 +409,9 @@ def run_inference() -> None:
         logger.info(f"Total images processed: {total_images}")
         logger.info(f"Total time: {elapsed}")
         logger.info(f"Average speed: {images_per_sec:.2f} images/sec")
-        logger.info(f"Average time per image: {elapsed.total_seconds()/total_images:.4f} sec")
+        logger.info(
+            f"Average time per image: {elapsed.total_seconds() / total_images:.4f} sec"
+        )
 
         # Log output location
         if config.output_dir:
@@ -408,9 +424,13 @@ def run_inference() -> None:
             if config.output_format == "individual":
                 logger.info(f"  - {total_images} embedding files (*_embedding.npy)")
                 if not config.embeddings_only:
-                    logger.info(f"  - {total_images} probability files (*_probabilities.npy)")
+                    logger.info(
+                        f"  - {total_images} probability files (*_probabilities.npy)"
+                    )
                 if config.save_attention_maps:
-                    logger.info(f"  - {total_images} attention maps (*_attention_map.png)")
+                    logger.info(
+                        f"  - {total_images} attention maps (*_attention_map.png)"
+                    )
 
         # Clean up
         del dataloader
@@ -442,6 +462,43 @@ def run_inference() -> None:
         logger.info("=" * 60)
         logger.info(f"End: {end_time.strftime('%Y/%m/%d %H:%M:%S')}")
         logger.info("=" * 60)
+
+
+def setup_model(model_channels: str, model_type: str):
+    """
+    model_channels:
+    model_type:
+    """
+    classifier_paths, encoder_path, model_config = ensure_models_available(
+        model_channels,
+        model_type,
+        True,  # embeddings_only
+        False,  # Update_model
+    )
+
+    # Load model
+    model = ViTPoolClassifier(model_config)
+    classifier_paths_for_loading = (
+        classifier_paths if classifier_paths is not None else []
+    )
+    model.load_model_dict(encoder_path, classifier_paths_for_loading)
+    model.eval()
+
+    return model.cuda()
+
+
+def run_inference(model_channels, model_type, device, pixels):
+    model = setup_model(model_channels, model_type)
+    # Setup device
+    # device = setup_device(, logger)
+    model.to(device)
+
+    inference_result = inference.run_model(
+        model,
+        pixels,
+        device,
+    )
+    return inference_result
 
 
 if __name__ == "__main__":
