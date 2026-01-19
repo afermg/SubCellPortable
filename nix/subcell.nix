@@ -19,9 +19,9 @@ buildPythonPackage {
   src = ./..; # For local testing, add flag --impure when running
   # src = fetchFromGitHub {
   #   owner = "afermg";
-  #   repo = "baby";
-  #   rev = "39eec0d4c3b8fad9b0a8683cbedf9b4558e07222";
-  #   sha256 = "sha256-ptLXindgixDa4AV3x+sQ9I4W0PScIQMkyMNMo0WFa0M=";
+  #   repo = "SubCellPortable";
+  #   rev = "9d3c372ace5ae5b0b6677933f619b6d48988f2ef";
+  #   sha256 = "";
   # };
 
   pyproject = true;

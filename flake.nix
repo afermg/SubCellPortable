@@ -1,12 +1,12 @@
 {
   inputs = {
-    # nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nixpkgs.url = "github:NixOS/nixpkgs/161120e886d7146b49bc335dcd116b68e1e3e82d";
-    nixpkgs_master.url = "github:NixOS/nixpkgs/master";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # nixpkgs_transformers_2_5_1.url = "github:NixOS/nixpkgs/161120e886d7146b49bc335dcd116b68e1e3e82d"; # transformers 2.5.1
     systems.url = "github:nix-systems/default";
     flake-utils.url = "github:numtide/flake-utils";
     flake-utils.inputs.systems.follows = "systems";
     nahual-flake.url = "github:afermg/nahual";
+    # nixpkgs.url = "github:NixOS/nixpkgs/d97b37430f8f0262f97f674eb357551b399c2003";
   };
 
   outputs =
@@ -32,25 +32,39 @@
           pkgs.stdenv.cc
           pkgs.libGL
           pkgs.gcc
-          #pkgs.gcc.cc.lib
           pkgs.glib
           pkgs.libz
           pkgs.glibc
-          #pkgs.glibc.dev
         ];
       in
       with pkgs;
       rec {
+        py312 = (
+          pkgs.python312.override {
+            packageOverrides = _: super: {
+              transformers = super.transformers.overridePythonAttrs (old: rec {
+						    version = "4.45.1";
+						    doCheck = false;
+						src = super.fetchPypi {
+							pname = "transformers";
+							inherit version;
+							hash = "sha256-nKzhEHIXLfBcpqaU/NH1BkpVtjKF5JK9iPCtHOwnDwI=";
+						};
+					    });
+            };
+          }
+        );
         packages = {
-          subcell = pkgs.python3.pkgs.callPackage ./nix/subcell.nix { };
+          subcell = py312.pkgs.callPackage ./nix/subcell.nix { };
         };
         devShells = {
           default =
             let
               python_with_pkgs = (
-                python3.withPackages (pp: [
-                  (inputs.nahual-flake.packages.${system}.nahual)
+                python312.withPackages (pp: [
+                  # (inputs.nahual-flake.packages.${system}.nahual)
                   packages.subcell
+                  # packages.pynng
                 ])
               );
             in
