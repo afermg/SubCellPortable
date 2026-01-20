@@ -1,7 +1,7 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # nixpkgs_transformers_2_5_1.url = "github:NixOS/nixpkgs/161120e886d7146b49bc335dcd116b68e1e3e82d"; # transformers 2.5.1
+    # nixpkgs_transformers_4_45_1.url = "github:NixOS/nixpkgs/161120e886d7146b49bc335dcd116b68e1e3e82d"; # transformers 4_45_1
     systems.url = "github:nix-systems/default";
     flake-utils.url = "github:numtide/flake-utils";
     flake-utils.inputs.systems.follows = "systems";
@@ -45,12 +45,37 @@
               transformers = super.transformers.overridePythonAttrs (old: rec {
 						    version = "4.45.1";
 						    doCheck = false;
-						src = super.fetchPypi {
-							pname = "transformers";
-							inherit version;
-							hash = "sha256-nKzhEHIXLfBcpqaU/NH1BkpVtjKF5JK9iPCtHOwnDwI=";
-						};
+                doInstallCheck = false;
+						    src = super.fetchPypi {
+							    pname = "transformers";
+							    inherit version;
+							    hash = "sha256-nKzhEHIXLfBcpqaU/NH1BkpVtjKF5JK9iPCtHOwnDwI=";
+						    };
 					    });
+              tokenizers = super.tokenizers.overridePythonAttrs (old: rec {
+                pname = "tokenizers";
+						    version = "0.20.3";
+						    doCheck = false;
+                
+						    src = fetchFromGitHub {
+                  owner = "huggingface";
+                  repo = "tokenizers";
+                  rev = "refs/tags/v${version}";
+                  hash = "sha256-NPH++kPPaSPR3jm6mfh+4aep6stj0I4bA24kFtaJSKU=";
+                };
+                
+                sourceRoot = "${src.name}/bindings/python";
+                cargoDeps = rustPlatform.fetchCargoVendor {
+                  inherit
+                    pname
+                    version
+                    src
+                    sourceRoot
+                  ;
+                  hash = "sha256-9JcstMp3wQJ7OH5LCbtdfRN6KHP9R93uZ3ssEytRzP4=";
+  };
+					    });
+              
             };
           }
         );
@@ -71,7 +96,7 @@
             mkShell {
               packages = [
                 python_with_pkgs
-                python3Packages.venvShellHook
+                python312Packages.venvShellHook
                 pkgs.cudaPackages.cudatoolkit
                 pkgs.cudaPackages.cudnn
               ];
