@@ -7,6 +7,7 @@
     flake-utils.url = "github:numtide/flake-utils";
     flake-utils.inputs.systems.follows = "systems";
     nahual-flake.url = "github:afermg/nahual";
+    pynng-flake.url = "github:afermg/pynng";
   };
 
   outputs =
@@ -43,14 +44,18 @@
       rec {
         packages = {
           subcell = pkgs.python3.pkgs.callPackage ./nix/subcell.nix { };
+          nahual = (inputs.nahual-flake.packages.${system}.nahual);
+          pynng = (inputs.pynng-flake.packages.${system}.pynng);
         };
         devShells = {
           default =
             let
               python_with_pkgs = (
                 python3.withPackages (pp: [
-                  (inputs.nahual-flake.packages.${system}.nahual)
+                  packages.nahual
+                  packages.pynng
                   packages.subcell
+                  pp.loguru
                 ])
               );
             in
@@ -72,7 +77,7 @@
               shellHook = ''
                 # Set PYTHONPATH to only include the Nix packages, excluding current directory
                 runHook venvShellHook
-                export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}
+                export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
               '';
             };
         };
