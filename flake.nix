@@ -45,23 +45,26 @@
           nahual = (inputs.nahual-flake.packages.${system}.nahual);
           pynng = (inputs.pynng-flake.packages.${system}.pynng);
         };
-        apps.default =
-          let
+        scripts = let
             python_with_pkgs = python3.withPackages (pp: [
               packages.pynng
               packages.nahual
               packages.subcell
               pp.loguru
             ]);
-            runServer = pkgs.writeScriptBin "runserver.sh" ''
-              #!${pkgs.bash}/bin/bash
-              export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
-              ${python_with_pkgs}/bin/python ${self}/server.py ''${@:-"ipc:///tmp/subcell.ipc"}
-            '';
-          in
-          {
-            type = "app";
-            program = "${runServer}/bin/runserver.sh";
+            in 
+              {
+                runSubcell = pkgs.writeScriptBin "run_subcell" ''
+                 #!${pkgs.bash}/bin/bash
+                    ${python_with_pkgs}/bin/python ${self}/server.py ''${1:-"ipc:///tmp/subcell.ipc"}
+                      '';
+              };
+        apps = rec {
+            subcell = {
+              type = "app";
+              program = "${self.scripts.${stdenv.hostPlatform.system}.runSubcell}/bin/run_subcell";
+            };
+            default = subcell;
           };
         devShells = {
           default =

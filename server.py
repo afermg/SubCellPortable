@@ -12,21 +12,24 @@ from loguru import logger
 from nahual.preprocess import pad_channel_dim, validate_input_shape
 from nahual.server import responder
 
-from process import setup_device, setup_model
+from process import setup_model
 
 # We will use pre-existing information to enforce guardrails on the input data
 # model -> (expected #channels, mandated shape of yx)
 guardrail_shapes = {
-    "mae_contrast_supcon_model": (4, (1, 256, 256)),
+    "mae_contrast_supcon_model": (4, 256),  # TODO relax constraints?
 }
 
 
 def setup(model_type: str, model_channels: str, **kwargs) -> dict:
     # Some default values
+    device = kwargs.get("device", 0)
+
+    # Some default values
     setup_defaults = dict(
         model_type="mae_contrast_supcon_model",
         model_channels="rybg",
-        # gpu_id=kwargs.get("device", 0),
+        device=torch.device(device),
     )
     execution_defaults = dict()
 
@@ -37,12 +40,17 @@ def setup(model_type: str, model_channels: str, **kwargs) -> dict:
     setup_params = {**setup_defaults, **setup_kwargs}
     execution_params = {**execution_defaults, **execution_kwargs}
 
+    device = setup_params.pop("device")
     # Load model instance
+    print("before model loading")
     model = setup_model(**setup_params)
+    print("model loading passed")
+    model = model.to(device)
+    # model.eval() gets done within setup_model
 
     expected_nchannels, yx_shape = guardrail_shapes[model_type]
     execution_params["expected_nchannels"] = expected_nchannels
-    execution_params["expected_zyx"] = yx_shape
+    execution_params["expected_yx"] = yx_shape
 
     # Generate a json-encodable dictionary to send back to the client
     serializable_params = {
@@ -51,7 +59,7 @@ def setup(model_type: str, model_channels: str, **kwargs) -> dict:
     }
 
     # "Freeze" model in-place
-    processor = partial(process_pixels, model=model, **execution_params)
+    processor = partial(process_pixels, model=model, device=device, **execution_params)
     return processor, serializable_params
 
 
@@ -81,21 +89,22 @@ async def main():
 def process_pixels(
     pixels: numpy.ndarray,
     model,
-    expected_zyx: tuple[int],
+    expected_yx: tuple[int],
     expected_nchannels: int,
+    device: int,
 ) -> numpy.ndarray:
     """Apply a pretrained model. We pass arguments that encode the necessary input shapes and number of channels to pad. We will valudate the yx dimensions and pad the channel dimension with zeros.
 
     The pixels should be in order NCZYX (Tile, Channel, ZYX).
     """
 
-    _, input_channels, *input_zyx = pixels.shape
+    _, input_channels, _, *input_yx = pixels.shape
 
-    validate_input_shape(input_zyx, expected_zyx)
+    validate_input_shape(input_yx, expected_yx)
 
     pixels = pad_channel_dim(pixels, expected_nchannels).copy()
 
-    pixels_torch = torch.from_numpy(pixels).float().cuda()
+    pixels_torch = torch.from_numpy(pixels).float().to(device)
 
     with torch.no_grad():
         embeddings = model(pixels_torch)

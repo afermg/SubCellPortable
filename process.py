@@ -484,7 +484,7 @@ def setup_model(model_channels: str, model_type: str):
     model.load_model_dict(encoder_path, classifier_paths_for_loading)
     model.eval()
 
-    return model.cuda()
+    return model
 
 
 def run_inference(model_channels, model_type, device, pixels):
