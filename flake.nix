@@ -55,6 +55,7 @@
             in 
               {
                 runSubcell = pkgs.writeScriptBin "run_subcell" ''
+                export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
                  #!${pkgs.bash}/bin/bash
                     ${python_with_pkgs}/bin/python ${self}/server.py ''${1:-"ipc:///tmp/subcell.ipc"}
                       '';
