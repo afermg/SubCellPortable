@@ -101,7 +101,7 @@ def download_models(
     logger.info("- Downloading models...")
 
     # Load URL configuration
-    with open(MODELS_URLS_FILE, "r") as f:
+    with open(Path(__file__).parent / MODELS_URLS_FILE, "r") as f:
         url_info = yaml.safe_load(f)
 
     model_urls = url_info[model_channels][model_type]
