@@ -163,11 +163,8 @@ def load_model_config(
     Raises:
         FileNotFoundError: If model config file doesn't exist
     """
-    config_path = os.path.join(
-        "models",
-        model_channels,
-        model_type,
-        MODEL_CONFIG_FILE,
+    config_path = (
+        Path(__file__) / "models" / model_channels / model_type / MODEL_CONFIG_FILE
     )
 
     if not os.path.exists(config_path):
