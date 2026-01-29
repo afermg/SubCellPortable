@@ -17,7 +17,7 @@ from process import setup_model
 # We will use pre-existing information to enforce guardrails on the input data
 # model -> (expected #channels, mandated shape of yx)
 guardrail_shapes = {
-    "mae_contrast_supcon_model": (4, 256),  # TODO relax constraints?
+    "mae_contrast_supcon_model": (4, 16),  # TODO relax constraints?
 }
 
 
