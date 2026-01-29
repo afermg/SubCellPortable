@@ -1,17 +1,19 @@
 """Model downloading and loading functionality."""
 
-import os
 import logging
-from typing import Tuple, Optional, List
-import yaml
-import requests
+import os
+from pathlib import Path
+from typing import List, Optional, Tuple
+from urllib.parse import urlparse
+
 import boto3
+import requests
+import yaml
 from botocore import UNSIGNED
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
-from urllib.parse import urlparse
 
-from config import MODELS_URLS_FILE, MODEL_CONFIG_FILE
+from config import MODEL_CONFIG_FILE, MODELS_URLS_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,9 @@ def download_file_from_url(url: str, output_path: str) -> bool:
             logger.info(f"  - {output_path} updated.")
             return True
         else:
-            logger.warning(f"  - {output_path} url {url} returned status {response.status_code}.")
+            logger.warning(
+                f"  - {output_path} url {url} returned status {response.status_code}."
+            )
             return False
     except Exception as e:
         logger.warning(f"  - {output_path} download failed: {e}")
@@ -52,7 +56,7 @@ def download_file_from_s3(s3_url: str, output_path: str) -> bool:
         True if successful, False otherwise
     """
     try:
-        s3 = boto3.client('s3', config=BotoConfig(signature_version=UNSIGNED))
+        s3 = boto3.client("s3", config=BotoConfig(signature_version=UNSIGNED))
         url_components = urlparse(s3_url)
         bucket = url_components.netloc
         key = url_components.path[1:]  # Remove leading /
@@ -105,7 +109,9 @@ def download_models(
     # Download classifiers if needed (not in embeddings_only mode)
     if classifier_paths:
         classifier_urls = model_urls["classifiers"]
-        for idx, (url, output_path) in enumerate(zip(classifier_urls, classifier_paths)):
+        for idx, (url, output_path) in enumerate(
+            zip(classifier_urls, classifier_paths)
+        ):
             download_model_file(url, output_path)
 
     # Download encoder
@@ -178,7 +184,8 @@ def load_model_config(
     if not embeddings_only and "classifier_paths" in model_config_file:
         classifier_paths = model_config_file["classifier_paths"]
 
-    encoder_path = model_config_file["encoder_path"]
+    encoder_path = Path("~").expanduser() / ".cache" / model_config_file["encoder_path"]
+    encoder_path.parent.mkdir(parents=True, exist_ok=True)
     model_config = model_config_file.get("model_config")
 
     return classifier_paths, encoder_path, model_config

@@ -58,6 +58,7 @@
             runSubcell = pkgs.writeScriptBin "run_subcell" ''
                #!${pkgs.bash}/bin/bash
                export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
+               ${python_with_packages}/bin/python ${self}/ensure_model.py ''${2:-"rybg"} ''${3:-"mae_contrast_supcon_model"}
                ${python_with_pkgs}/bin/python ${self}/server.py ''${1:-"ipc:///tmp/subcell.ipc"}
             '';
           };
