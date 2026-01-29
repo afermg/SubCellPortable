@@ -45,23 +45,20 @@
           nahual = (inputs.nahual-flake.packages.${system}.nahual);
           pynng = (inputs.pynng-flake.packages.${system}.pynng);
         };
-        scripts =
-          let
-            python_with_pkgs = python3.withPackages (pp: [
-              packages.pynng
-              packages.nahual
-              packages.subcell
-              pp.loguru
-            ]);
-          in
-          {
-            runSubcell = pkgs.writeScriptBin "run_subcell" ''
-               #!${pkgs.bash}/bin/bash
-               export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
-               ${python_with_packages}/bin/python ${self}/ensure_model.py ''${2:-"rybg"} ''${3:-"mae_contrast_supcon_model"}
-               ${python_with_pkgs}/bin/python ${self}/server.py ''${1:-"ipc:///tmp/subcell.ipc"}
-            '';
-          };
+        python_with_pkgs = python3.withPackages (pp: [
+          packages.pynng
+          packages.nahual
+          packages.subcell
+          pp.loguru
+        ]);
+        scripts = {
+          runSubcell = pkgs.writeScriptBin "run_subcell" ''
+            #!${pkgs.bash}/bin/bash
+            export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
+            ${python_with_pkgs}/bin/python ${self}/ensure_model.py --model-channels ''${2:-"rybg"} --model-type ''${3:-"mae_contrast_supcon_model"}
+            ${python_with_pkgs}/bin/python ${self}/server.py ''${1:-"ipc:///tmp/subcell.ipc"}
+          '';
+        };
         apps = rec {
           subcell = {
             type = "app";
