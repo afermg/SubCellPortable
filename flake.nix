@@ -54,6 +54,12 @@
         scripts = {
           runSubcell = pkgs.writeScriptBin "run_subcell" ''
             #!${pkgs.bash}/bin/bash
+            # nahual and pynng are sourced from upstream flake inputs whose
+            # packages are built against a different python interpreter than
+            # the one we use here (python3.12). python.withPackages silently
+            # drops the cross-interpreter inputs, so we glue them back in via
+            # PYTHONPATH. TODO: rebuild nahual/pynng locally against python3.12
+            # so this can be dropped.
             export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
             ${python_with_pkgs}/bin/python ${self}/ensure_model.py --model-channels ''${2:-"rybg"} --model-type ''${3:-"mae_contrast_supcon_model"}
             ${python_with_pkgs}/bin/python ${self}/server.py ''${1:-"ipc:///tmp/subcell.ipc"}
@@ -94,8 +100,12 @@
                 unset SOURCE_DATE_EPOCH
               '';
               shellHook = ''
-                # Set PYTHONPATH to only include the Nix packages, excluding current directory
                 runHook venvShellHook
+                # nahual and pynng are sourced from upstream flake inputs whose
+                # packages are built against a different python interpreter
+                # than the local one. python.withPackages silently drops the
+                # cross-interpreter inputs, so glue them back in via PYTHONPATH.
+                # TODO: rebuild nahual/pynng locally so this hack can go.
                 export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
               '';
             };
