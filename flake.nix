@@ -1,6 +1,5 @@
 {
   inputs = {
-    # nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixpkgs.url = "github:NixOS/nixpkgs/161120e886d7146b49bc335dcd116b68e1e3e82d";
     nixpkgs_master.url = "github:NixOS/nixpkgs/master";
     systems.url = "github:nix-systems/default";
@@ -10,113 +9,92 @@
     pynng-flake.url = "github:afermg/pynng";
   };
 
-  outputs =
-    {
-      self,
-      nixpkgs,
-      flake-utils,
-      systems,
-      ...
-    }@inputs:
+  outputs = {
+    self,
+    nixpkgs,
+    flake-utils,
+    ...
+  } @ inputs:
     flake-utils.lib.eachDefaultSystem (
-      system:
-      let
+      system: let
         pkgs = import nixpkgs {
-          system = system;
+          inherit system;
           config = {
             allowUnfree = true;
             cudaSupport = true;
           };
         };
-        libList = [
-          pkgs.stdenv.cc.cc
-          pkgs.stdenv.cc
-          pkgs.libGL
-          pkgs.gcc
-          pkgs.glib
-          pkgs.libz
-          pkgs.glibc
-        ];
-      in
-      with pkgs;
-      rec {
-        packages = {
-          subcell = pkgs.python3.pkgs.callPackage ./nix/subcell.nix { };
-          nahual = (inputs.nahual-flake.packages.${system}.nahual);
-          pynng = (inputs.pynng-flake.packages.${system}.pynng);
+        modelPackages = rec {
+          subcell = pkgs.python3.pkgs.callPackage ./nix/subcell.nix {};
+          pynng = pkgs.python3.pkgs.callPackage ./nix/pynng-local.nix {};
+          nahual =
+            (pkgs.python3.pkgs.callPackage (inputs.nahual-flake + "/nix/nahual.nix") {
+              inherit pynng;
+            }).overridePythonAttrs
+            (_: {
+              # This pinned nixpkgs has loguru 0.7.2; Nahual's >=0.7.3
+              # declaration does not reflect APIs used by the server.
+              dontCheckRuntimeDeps = true;
+            });
         };
-        python_with_pkgs = python3.withPackages (pp: [
-          packages.pynng
-          packages.nahual
-          packages.subcell
+        python_with_pkgs = pkgs.python3.withPackages (pp: [
+          modelPackages.subcell
+          modelPackages.nahual
+          modelPackages.pynng
           pp.loguru
         ]);
-        scripts = {
-          runSubcell = pkgs.writeScriptBin "run_subcell" ''
-            #!${pkgs.bash}/bin/bash
-            # nahual and pynng are sourced from upstream flake inputs whose
-            # packages are built against a different python interpreter than
-            # the one we use here (python3.12). python.withPackages silently
-            # drops the cross-interpreter inputs, so we glue them back in via
-            # PYTHONPATH. TODO: rebuild nahual/pynng locally against python3.12
-            # so this can be dropped.
-            export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
-            ${python_with_pkgs}/bin/python ${self}/ensure_model.py --model-channels ''${2:-"rybg"} --model-type ''${3:-"mae_contrast_supcon_model"}
-            ${python_with_pkgs}/bin/python ${self}/server.py ''${1:-"ipc:///tmp/subcell.ipc"}
-          '';
+        runSubcell = pkgs.writeScriptBin "nahual-subcell" ''
+          #!${pkgs.bash}/bin/bash
+          set -e
+          export PYTHONPATH=${self}
+          ${python_with_pkgs}/bin/python ${self}/ensure_model.py \
+            --model-channels "''${2:-rybg}" \
+            --model-type "''${3:-mae_contrast_supcon_model}"
+          exec ${python_with_pkgs}/bin/python ${self}/server.py \
+            "''${1:-tcp://0.0.0.0:5555}"
+        '';
+        subcellApp = {
+          type = "app";
+          program = "${runSubcell}/bin/nahual-subcell";
         };
-        apps = rec {
-          subcell = {
-            type = "app";
-            program = "${self.scripts.${stdenv.hostPlatform.system}.runSubcell}/bin/run_subcell";
-          };
-          default = subcell;
-        };
-        devShells = {
-          default =
-            let
-              python_with_pkgs = (
-                python3.withPackages (pp: [
-                  packages.nahual
-                  packages.pynng
-                  packages.subcell
-                  pp.loguru
-                ])
-              );
-            in
-            mkShell {
-              packages = [
-                python_with_pkgs
-                python3Packages.venvShellHook
-                pkgs.cudaPackages.cudatoolkit
-                pkgs.cudaPackages.cudnn
-              ];
-              currentSystem = system;
-              venvDir = "./.venv";
-              postVenvCreation = ''
-                unset SOURCE_DATE_EPOCH
-              '';
-              postShellHook = ''
-                unset SOURCE_DATE_EPOCH
-              '';
-              shellHook = ''
-                runHook venvShellHook
-                # nahual and pynng are sourced from upstream flake inputs whose
-                # packages are built against a different python interpreter
-                # than the local one. python.withPackages silently drops the
-                # cross-interpreter inputs, so glue them back in via PYTHONPATH.
-                # TODO: rebuild nahual/pynng locally so this hack can go.
-                export PYTHONPATH=${python_with_pkgs}/${python_with_pkgs.sitePackages}:${packages.nahual}/lib/python3.13/site-packages:${packages.pynng}/lib/python3.13/site-packages
-              '';
+      in
+        with pkgs; rec {
+          packages =
+            modelPackages
+            // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+              oci-image = import ./nix/oci-image.nix {
+                inherit pkgs;
+                name = "subcell";
+                title = "Nahual SubCell";
+                description = "SubCell feature extraction served through Nahual";
+                source = "https://github.com/afermg/SubCellPortable";
+                revision = self.rev or self.dirtyRev or "unknown";
+                server = runSubcell;
+                entrypoint = subcellApp.program;
+              };
             };
-        };
-      }
+          inherit python_with_pkgs;
+          scripts.runSubcell = runSubcell;
+          apps = rec {
+            subcell = subcellApp;
+            default = subcell;
+          };
+          devShells.default = mkShell {
+            packages = [
+              python_with_pkgs
+              python3Packages.venvShellHook
+              pkgs.cudaPackages.cudatoolkit
+              pkgs.cudaPackages.cudnn
+            ];
+            currentSystem = system;
+            venvDir = "./.venv";
+            postVenvCreation = ''unset SOURCE_DATE_EPOCH'';
+            postShellHook = ''unset SOURCE_DATE_EPOCH'';
+            shellHook = ''
+              runHook venvShellHook
+              export PYTHONPATH=${self}
+            '';
+          };
+        }
     );
 }
-# export CUDA_PATH=${pkgs.cudaPackages.cudatoolkit}
-# export LD_LIBRARY_PATH=${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.cudaPackages.cudnn}/lib:$LD_LIBRARY_PATH
-# export NVCC_APPEND_FLAGS="-Xcompiler -fno-PIC"
-# export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6"
-# export CUDA_NVCC_FLAGS="-O2 -Xcompiler -fno-PIC"
-# # Ensure current directory is not in Python path
-# export PYTHONDONTWRITEBYTECODE=1

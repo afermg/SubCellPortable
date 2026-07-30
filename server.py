@@ -23,18 +23,32 @@ guardrail_shapes = {
 
 def setup(model_type: str, model_channels: str, **kwargs) -> dict:
     # Some default values
-    device = kwargs.get("device", 0)
+    requested_device = kwargs.get("device")
+    if requested_device is None:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    elif isinstance(requested_device, int):
+        device = (
+            torch.device(requested_device)
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+    else:
+        device = torch.device(requested_device)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                f"CUDA device requested but CUDA is unavailable: {requested_device}"
+            )
 
     # Some default values
     setup_defaults = dict(
-        model_type="mae_contrast_supcon_model",
-        model_channels="rybg",
-        device=torch.device(device),
+        model_type=model_type,
+        model_channels=model_channels,
+        device=device,
     )
     execution_defaults = dict()
 
-    setup_kwargs = kwargs.get("setup_kwargs", {})
-    execution_kwargs = kwargs.get("execution_kwargs", {})
+    setup_kwargs = kwargs.get("setup_kwargs", {}).copy()
+    execution_kwargs = kwargs.get("execution_kwargs", {}).copy()
 
     # Define parameters by combining defaults and non-defaults
     setup_params = {**setup_defaults, **setup_kwargs}
@@ -53,9 +67,10 @@ def setup(model_type: str, model_channels: str, **kwargs) -> dict:
     execution_params["expected_yx"] = yx_shape
 
     # Generate a json-encodable dictionary to send back to the client
+    setup_info = {**setup_params, "device": device}
     serializable_params = {
-        name: {k: str(v) for k, v in d.items()}
-        for name, d in zip(("setup", "execution"), (setup_params, execution_params))
+        name: {k: str(v) for k, v in values.items()}
+        for name, values in zip(("setup", "execution"), (setup_info, execution_params))
     }
 
     # "Freeze" model in-place
