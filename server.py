@@ -79,13 +79,14 @@ async def main():
     None
     """
 
-    with pynng.Rep0(listen=address, recv_timeout=300) as sock:
+    with pynng.Rep0(listen=address, recv_timeout=300_000) as sock:
         print(f"Pretrained SubCell server listening on {address}")
         async with trio.open_nursery() as nursery:
             responder_curried = partial(responder, setup=setup)
             nursery.start_soon(responder_curried, sock)
 
 
+@torch.inference_mode()
 def process_pixels(
     pixels: numpy.ndarray,
     model,
@@ -127,10 +128,9 @@ def process_pixels(
 
     pixels_torch = torch.from_numpy(pixels).float().to(device)
 
-    with torch.no_grad():
-        embeddings = model(pixels_torch)
-        # SubCell output: (N, 1536)
-        embeddings_np = embeddings.pool_op.cpu().numpy()
+    embeddings = model(pixels_torch)
+    # SubCell output: (N, 1536)
+    embeddings_np = embeddings.pool_op.cpu().numpy()
 
     return embeddings_np
 
